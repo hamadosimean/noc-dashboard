@@ -1,34 +1,96 @@
-import React from 'react';
-import TrendLine from '../components/charts/TrendLine';
+import React from "react";
+import { Activity, Link2, Server, Zap } from "lucide-react";
+import Card from "../components/Card";
+import TrendLine from "../components/charts/TrendLine";
+import { useKpiNodes, useKpiTrend } from "../hooks/useKPI";
+import { STATUS } from "../theme/colors";
+
+const TOOLS = [
+  {
+    key: "zabbix",
+    name: "Zabbix",
+    icon: Activity,
+    description: "Surveillance énergie et onduleurs. Agent actif.",
+  },
+  {
+    key: "nagios",
+    name: "Nagios",
+    icon: Server,
+    description: "Disponibilité hôtes et services via NDO2DB.",
+  },
+  {
+    key: "centreon",
+    name: "Centreon / iTop",
+    icon: Link2,
+    description: "Agrégation des alertes et création de tickets automatique.",
+  },
+];
 
 const InteropView = () => {
+  const { data: nodes = [], isLoading } = useKpiNodes(undefined, 100);
+  const { data: trend } = useKpiTrend(6);
+
+  const incidentsByTool = nodes.reduce((acc, n) => {
+    acc[n.source_tool] = (acc[n.source_tool] ?? 0) + n.total_incidents;
+    return acc;
+  }, {});
+
   return (
     <div className="space-y-6">
-      <h2 className="text-2xl font-semibold text-gray-800">Interopérabilité</h2>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-white p-6 rounded-lg shadow border border-gray-200">
-          <h3 className="font-medium text-lg mb-2">Zabbix</h3>
-          <p className="text-gray-600 text-sm mb-4">Surveillance énergie et onduleurs. Agent actif.</p>
-          <div className="text-sm font-semibold text-green-600">Statut: Connecté</div>
-        </div>
-        <div className="bg-white p-6 rounded-lg shadow border border-gray-200">
-          <h3 className="font-medium text-lg mb-2">Nagios</h3>
-          <p className="text-gray-600 text-sm mb-4">Disponibilité hôtes et services via NDO2DB.</p>
-          <div className="text-sm font-semibold text-green-600">Statut: Connecté</div>
-        </div>
-        <div className="bg-white p-6 rounded-lg shadow border border-gray-200">
-          <h3 className="font-medium text-lg mb-2">Centreon / iTop</h3>
-          <p className="text-gray-600 text-sm mb-4">Agrégation des alertes et création de tickets automatique.</p>
-          <div className="text-sm font-semibold text-green-600">Statut: Webhooks Actifs</div>
+      <div className="flex items-center gap-2">
+        <Zap className="h-5 w-5" style={{ color: "var(--color-accent)" }} />
+        <div>
+          <h2
+            className="text-xl font-bold"
+            style={{ color: "var(--color-text-primary)" }}
+          >
+            Interopérabilité
+          </h2>
+          <p
+            className="text-sm"
+            style={{ color: "var(--color-text-secondary)" }}
+          >
+            Pipeline collecte → agrégation → ITSM → tableau de bord
+          </p>
         </div>
       </div>
-      
-      <div className="bg-white p-4 rounded-lg shadow border border-gray-200">
-        <h3 className="text-lg font-medium mb-4">Disponibilité globale agrégée</h3>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        {TOOLS.map((tool) => (
+          <Card key={tool.key} icon={tool.icon} title={tool.name}>
+            <p
+              className="mb-4 text-sm"
+              style={{ color: "var(--color-text-secondary)" }}
+            >
+              {tool.description}
+            </p>
+            <div
+              className="flex items-center gap-1.5 text-sm font-semibold"
+              style={{ color: STATUS.good }}
+            >
+              <span
+                className="h-2 w-2 rounded-full"
+                style={{ background: STATUS.good }}
+              />
+              Connecté
+            </div>
+            <div
+              className="mt-1 text-xs"
+              style={{ color: "var(--color-text-muted)" }}
+            >
+              {isLoading
+                ? "Chargement…"
+                : `${incidentsByTool[tool.key] ?? 0} incident(s) ce mois-ci`}
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      <Card title="Disponibilité globale agrégée" subtitle="6 derniers mois">
         <div className="h-64">
-          <TrendLine />
+          <TrendLine points={trend} />
         </div>
-      </div>
+      </Card>
     </div>
   );
 };

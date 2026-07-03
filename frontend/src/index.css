@@ -1,5 +1,44 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+  Design tokens — validated against the dataviz skill's six-check palette
+  validator (categorical + status colors pass contrast/CVD/lightness-band
+  checks against these exact surfaces). Dark is the primary, default theme
+  for this NOC command-center dashboard; light is a secondary, fully
+  supported alternative reached via the header toggle.
+*/
+:root {
+  --color-page: #f8fafc;
+  --color-surface: #ffffff;
+  --color-surface-2: #f1f5f9;
+  --color-surface-3: #e2e8f0;
+  --color-border: rgba(15, 23, 42, 0.09);
+  --color-border-strong: rgba(15, 23, 42, 0.16);
+  --color-text-primary: #0f172a;
+  --color-text-secondary: #475569;
+  --color-text-muted: #94a3b8;
+  --color-accent: #2a78d6;
+  --color-accent-soft: rgba(42, 120, 214, 0.12);
+  --shadow-elevate: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px rgba(15, 23, 42, 0.06);
+}
+
+.dark {
+  --color-page: #080b13;
+  --color-surface: #0f1626;
+  --color-surface-2: #151d31;
+  --color-surface-3: #1c2740;
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-border-strong: rgba(255, 255, 255, 0.14);
+  --color-text-primary: #f1f5f9;
+  --color-text-secondary: #94a3b8;
+  --color-text-muted: #64748b;
+  --color-accent: #3987e5;
+  --color-accent-soft: rgba(57, 135, 229, 0.16);
+  --shadow-elevate: 0 1px 2px rgba(0, 0, 0, 0.2), 0 12px 32px rgba(0, 0, 0, 0.35);
+}
+
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
@@ -7,5 +46,115 @@ body {
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: #f3f4f6;
+  background-color: var(--color-page);
+  color: var(--color-text-primary);
+  transition: background-color 0.15s ease;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: 999px;
+}
+
+/* ---- Leaflet / OpenStreetMap theming ------------------------------------ */
+/* OSM raster tiles are only published in one (light, colorful) cartography.
+   Rather than fork a tile server, dark mode applies a CSS filter to the tile
+   pane only — markers/popups sit in a separate pane and are left untouched. */
+.leaflet-dark-map .leaflet-tile-pane {
+  filter: invert(1) hue-rotate(180deg) brightness(0.95) contrast(0.9) saturate(0.8);
+}
+
+.leaflet-container {
+  background: var(--color-surface-2);
+  font-family: inherit;
+}
+
+.leaflet-control-zoom {
+  border: 1px solid var(--color-border-strong) !important;
+  box-shadow: var(--shadow-elevate) !important;
+  overflow: hidden;
+}
+.leaflet-control-zoom a {
+  background: var(--color-surface) !important;
+  color: var(--color-text-primary) !important;
+  border-color: var(--color-border) !important;
+}
+.leaflet-control-zoom a:hover {
+  background: var(--color-surface-2) !important;
+}
+
+.leaflet-control-attribution {
+  background: color-mix(in srgb, var(--color-surface) 85%, transparent) !important;
+  color: var(--color-text-muted) !important;
+  font-size: 10px !important;
+}
+.leaflet-control-attribution a {
+  color: var(--color-text-secondary) !important;
+}
+
+.leaflet-popup-content-wrapper {
+  background: var(--color-surface) !important;
+  color: var(--color-text-primary) !important;
+  box-shadow: var(--shadow-elevate) !important;
+  border-radius: 10px !important;
+}
+.leaflet-popup-tip {
+  background: var(--color-surface) !important;
+}
+.leaflet-popup-content {
+  margin: 10px 12px !important;
+  font-size: 13px !important;
+}
+
+.leaflet-div-icon {
+  background: transparent;
+  border: none;
+}
+
+.leaflet-tooltip {
+  background: var(--color-surface) !important;
+  color: var(--color-text-primary) !important;
+  border: 1px solid var(--color-border-strong) !important;
+  box-shadow: var(--shadow-elevate) !important;
+  border-radius: 8px !important;
+  padding: 6px 9px !important;
+}
+.leaflet-tooltip-top::before {
+  border-top-color: var(--color-border-strong) !important;
+}
+
+.noc-marker {
+  display: block;
+  cursor: pointer;
+  border-radius: 999px;
+  border: 2px solid var(--color-surface);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.15);
+}
+.noc-marker.is-selected {
+  border-color: var(--color-accent);
+  border-width: 3px;
+}
+.noc-marker-pulse {
+  border-radius: 999px;
+  animation: noc-pulse 2.4s ease-out infinite;
+}
+@keyframes noc-pulse {
+  0%   { transform: scale(0.9); opacity: 0.55; }
+  70%  { transform: scale(2.1); opacity: 0; }
+  100% { transform: scale(2.1); opacity: 0; }
+}
+
+.map-zoom-hint {
+  animation: noc-fade-in 0.2s ease-out;
+}
+@keyframes noc-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }

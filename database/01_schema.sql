@@ -40,6 +40,23 @@ CREATE TABLE dim_cause (
   UNIQUE(category, label)
 );
 
+-- Comptes du tableau de bord (§10.1 : admin / analyst / noc_agent)
+CREATE TABLE dim_user (
+  id             SERIAL PRIMARY KEY,
+  username       VARCHAR(50)  UNIQUE NOT NULL,
+  full_name      VARCHAR(150) NOT NULL,
+  role           VARCHAR(20)  NOT NULL DEFAULT 'noc_agent'
+                   CHECK (role IN ('admin','analyst','noc_agent')),
+  password_hash  VARCHAR(100) NOT NULL,
+  -- SHA-256 of the PIN, for fast quick-login lookup by hash (bcrypt is used
+  -- for the primary password; a short PIN doesn't warrant adaptive hashing
+  -- and needs to support direct lookup rather than per-user iteration).
+  pin_hash       VARCHAR(64)  UNIQUE,
+  is_active      BOOLEAN DEFAULT TRUE,
+  last_login_at  TIMESTAMP,
+  created_at     TIMESTAMP DEFAULT NOW()
+);
+
 -- Table de faits principale
 CREATE TABLE fact_incident (
   id               BIGSERIAL PRIMARY KEY,

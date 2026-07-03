@@ -1,32 +1,96 @@
-import React from 'react';
-import { Bell } from 'lucide-react';
+import React from "react";
+import { Bell, Check } from "lucide-react";
+import Card from "./Card";
+import { useAcknowledgeIncident, useOpenAlerts } from "../hooks/useRealtime";
+import { SEVERITY_COLOR } from "../theme/colors";
+
+const formatAge = (minutes) => {
+  if (minutes < 60) return `il y a ${minutes} min`;
+  if (minutes < 1440) return `il y a ${Math.round(minutes / 60)}h`;
+  return `il y a ${Math.round(minutes / 1440)}j`;
+};
 
 const AlertFeed = () => {
-  const alerts = [
-    { id: 1, message: "Alerte Centreon: DED-001 Hors Ligne", time: "Maintenant", severity: "critical" },
-    { id: 2, message: "Alerte Zabbix: Onduleur OUA-003 Faible Batterie", time: "il y a 5 min", severity: "high" },
-    { id: 3, message: "Webhook iTop: Ticket TKT-2026-4821 créé", time: "il y a 10 min", severity: "info" },
-  ];
+  const { data: alerts = [], isLoading } = useOpenAlerts(20);
+  const acknowledge = useAcknowledgeIncident();
 
   return (
-    <div className="bg-white rounded-lg shadow border border-gray-200 h-full flex flex-col">
-      <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center space-x-2">
-        <Bell className="w-5 h-5 text-gray-500" />
-        <h3 className="text-lg font-medium">Flux d'Alertes en Direct</h3>
-      </div>
-      <div className="p-4 flex-1 overflow-y-auto">
-        <div className="space-y-4">
-          {alerts.map(alert => (
-            <div key={alert.id} className="flex border-l-4 border-red-500 pl-3 py-1">
-              <div className="flex-1">
-                <p className="text-sm font-medium text-gray-900">{alert.message}</p>
-                <p className="text-xs text-gray-500">{alert.time}</p>
+    <Card
+      icon={Bell}
+      title="Flux d'Alertes en Direct"
+      subtitle="Actualisation automatique toutes les 15s"
+      action={
+        <span
+          className="rounded-full px-2 py-0.5 text-xs font-semibold"
+          style={{
+            background: "var(--color-accent-soft)",
+            color: "var(--color-accent)",
+          }}
+        >
+          {alerts.length} ouverte(s)
+        </span>
+      }
+      bodyClassName="p-3 overflow-y-auto"
+      bodyStyle={{ maxHeight: "clamp(280px, calc(100vh - 480px), 640px)" }}
+    >
+      <div className="space-y-1">
+        {isLoading && (
+          <p
+            className="p-2 text-sm"
+            style={{ color: "var(--color-text-muted)" }}
+          >
+            Chargement…
+          </p>
+        )}
+        {!isLoading && alerts.length === 0 && (
+          <p
+            className="p-2 text-sm"
+            style={{ color: "var(--color-text-muted)" }}
+          >
+            Aucune alerte ouverte.
+          </p>
+        )}
+        {alerts.map((alert) => {
+          const color = SEVERITY_COLOR[alert.severity] ?? SEVERITY_COLOR.low;
+          return (
+            <div
+              key={alert.id}
+              className="flex items-start gap-3 rounded-lg py-2 pl-3 pr-2 transition-colors hover:bg-[var(--color-surface-2)]"
+              style={{ borderLeft: `3px solid ${color}` }}
+            >
+              <div className="min-w-0 flex-1">
+                <p
+                  className="truncate text-sm font-medium"
+                  style={{ color: "var(--color-text-primary)" }}
+                >
+                  <span className="font-mono text-xs" style={{ color }}>
+                    [{alert.node_code}]
+                  </span>{" "}
+                  {alert.description ?? "Incident sans description"}
+                </p>
+                <p
+                  className="text-xs"
+                  style={{ color: "var(--color-text-secondary)" }}
+                >
+                  {alert.locality} — {formatAge(alert.age_minutes)}
+                </p>
               </div>
+              {alert.status === "open" && (
+                <button
+                  onClick={() => acknowledge.mutate(alert.id)}
+                  disabled={acknowledge.isPending}
+                  title="Prendre en charge"
+                  className="shrink-0 rounded-md p-1.5 transition-colors hover:bg-[var(--color-surface-3)]"
+                  style={{ color: "var(--color-text-muted)" }}
+                >
+                  <Check className="h-4 w-4" />
+                </button>
+              )}
             </div>
-          ))}
-        </div>
+          );
+        })}
       </div>
-    </div>
+    </Card>
   );
 };
 

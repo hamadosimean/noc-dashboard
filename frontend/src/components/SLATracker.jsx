@@ -1,22 +1,61 @@
-import React from 'react';
+import React from "react";
+import { CheckCircle2, XCircle } from "lucide-react";
+import { STATUS } from "../theme/colors";
 
 const SLATracker = ({ metric, value, target }) => {
   const isMet = value >= target;
-  
+  const color = isMet ? STATUS.good : STATUS.critical;
+
   return (
-    <div className="bg-white p-4 rounded-lg shadow border border-gray-200">
-      <div className="flex justify-between items-center mb-2">
-        <h4 className="font-medium text-gray-700">{metric}</h4>
-        <span className={`px-2 py-1 text-xs font-bold rounded ${isMet ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-          {isMet ? 'Atteint' : 'Non Atteint'}
+    <div
+      className="rounded-xl border p-5"
+      style={{
+        background: "var(--color-surface)",
+        borderColor: "var(--color-border)",
+        boxShadow: "var(--shadow-elevate)",
+      }}
+    >
+      <div className="mb-3 flex items-center justify-between">
+        <h4
+          className="text-sm font-semibold"
+          style={{ color: "var(--color-text-primary)" }}
+        >
+          {metric}
+        </h4>
+        <span
+          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-bold"
+          style={{ background: `${color}26`, color }}
+        >
+          {isMet ? (
+            <CheckCircle2 className="h-3.5 w-3.5" />
+          ) : (
+            <XCircle className="h-3.5 w-3.5" />
+          )}
+          {isMet ? "Atteint" : "Non Atteint"}
         </span>
       </div>
-      <div className="flex justify-between items-baseline mb-2">
-        <span className="text-2xl font-bold">{value}%</span>
-        <span className="text-sm text-gray-500">Cible: {target}%</span>
+      <div className="mb-2 flex items-baseline justify-between">
+        <span
+          className="text-2xl font-bold tabular-nums"
+          style={{ color: "var(--color-text-primary)" }}
+        >
+          {value}%
+        </span>
+        <span
+          className="text-sm"
+          style={{ color: "var(--color-text-secondary)" }}
+        >
+          Cible: {target}%
+        </span>
       </div>
-      <div className="w-full bg-gray-200 rounded-full h-2.5">
-        <div className={`h-2.5 rounded-full ${isMet ? 'bg-green-500' : 'bg-red-500'}`} style={{ width: `${value}%` }}></div>
+      <div
+        className="h-2 w-full rounded-full"
+        style={{ background: "var(--color-surface-3)" }}
+      >
+        <div
+          className="h-2 rounded-full transition-all"
+          style={{ width: `${Math.min(value, 100)}%`, background: color }}
+        />
       </div>
     </div>
   );

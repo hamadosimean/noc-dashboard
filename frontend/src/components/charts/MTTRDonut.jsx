@@ -1,22 +1,23 @@
 import React from 'react';
 import { Doughnut } from 'react-chartjs-2';
 import { Chart as ChartJS, ArcElement, Tooltip, Legend } from 'chart.js';
+import { useChartTheme } from '../../hooks/useChartTheme';
 
 ChartJS.register(ArcElement, Tooltip, Legend);
 
-const MTTRDonut = () => {
+// Incident count by cause category, fed by GET /api/kpi/causes
+const MTTRDonut = ({ causes = [] }) => {
+  const { chrome, categorical } = useChartTheme();
+
   const data = {
-    labels: ['Énergie', 'Équipement', 'Liaison', 'Autre'],
+    labels: causes.map((c) => c.category),
     datasets: [
       {
-        data: [45, 25, 20, 10],
-        backgroundColor: [
-          'rgba(245, 158, 11, 0.8)',
-          'rgba(59, 130, 246, 0.8)',
-          'rgba(16, 185, 129, 0.8)',
-          'rgba(107, 114, 128, 0.8)',
-        ],
-        borderWidth: 1,
+        data: causes.map((c) => c.total_incidents),
+        backgroundColor: causes.map((_, i) => categorical[i % categorical.length]),
+        borderColor: chrome.surface,
+        borderWidth: 2,
+        hoverOffset: 6,
       },
     ],
   };
@@ -24,8 +25,10 @@ const MTTRDonut = () => {
   const options = {
     responsive: true,
     maintainAspectRatio: false,
+    cutout: '68%',
     plugins: {
-      legend: { position: 'bottom' },
+      legend: { position: 'bottom', labels: { color: chrome.secondaryInk, usePointStyle: true, boxWidth: 8 } },
+      tooltip: { backgroundColor: chrome.surface, titleColor: chrome.primaryInk, bodyColor: chrome.secondaryInk, borderColor: chrome.grid, borderWidth: 1 },
     },
   };
 

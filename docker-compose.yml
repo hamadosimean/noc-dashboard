@@ -4,11 +4,23 @@ services:
   backend:
     build: ./backend
     ports:
-      - "8000:8000"
+      - "8000"
     environment:
       - REDIS_HOST=${REDIS_HOST}
-      - DB_HOST=${POSTGRES_HOST}
+      - REDIS_PORT=${REDIS_PORT}
       - CACHE_TTL=${CACHE_TTL}
+      - DB_HOST=${POSTGRES_HOST}
+      - DB_PORT=${POSTGRES_PORT}
+      - DB_USER=${POSTGRES_USER}
+      - DB_PASSWORD=${POSTGRES_PASSWORD}
+      - DB_NAME=${POSTGRES_DB}
+      - SECRET_KEY=${SECRET_KEY}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES}
+      - NOC_API_KEY=${NOC_API_KEY}
+      - ITOP_URL=${ITOP_URL}
+      - ITOP_USER=${ITOP_USER}
+      - ITOP_PASS=${ITOP_PASS}
+      - CORS_ORIGINS=${CORS_ORIGINS}
     depends_on:
       redis:
         condition: service_healthy
@@ -25,6 +37,20 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  etl:
+    build: ./etl
+    environment:
+      - DB_HOST=${POSTGRES_HOST}
+      - DB_PORT=${POSTGRES_PORT}
+      - DB_USER=${POSTGRES_USER}
+      - DB_PASSWORD=${POSTGRES_PASSWORD}
+      - DB_NAME=${POSTGRES_DB}
+      - NOC_API_URL=http://backend:8000
+      - NOC_API_KEY=${NOC_API_KEY}
+    depends_on:
+      backend:
+        condition: service_healthy
 
   frontend:
     build: ./frontend
@@ -50,7 +76,7 @@ services:
       retries: 5
 
   postgres:
-    image: postgres:15
+    image: postgres:15-alpine
     environment:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
@@ -59,7 +85,7 @@ services:
       - "5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./database:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
@@ -69,14 +95,24 @@ services:
   nginx:
     build: ./nginx
     ports:
-      - "80:80"
+      - "8888:443"
+    volumes:
+      - ./nginx/certs:/etc/nginx/certs:ro
     depends_on:
       backend:
         condition: service_healthy
       frontend:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "--spider",
+          "--no-check-certificate",
+          "https://127.0.0.1/",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5

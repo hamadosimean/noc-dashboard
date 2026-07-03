@@ -1,25 +1,108 @@
-import React from 'react';
-import NodeList from '../components/NodeList';
-import IncidentTable from '../components/IncidentTable';
+import React, { useEffect, useState } from "react";
+import { useLocation } from "react-router-dom";
+import { MapPin } from "lucide-react";
+import Card from "../components/Card";
+import NodeList from "../components/NodeList";
+import IncidentTable from "../components/IncidentTable";
+import BurkinaFasoMap from "../components/map/BurkinaFasoMap";
+import LocalityBulletList from "../components/map/LocalityBulletList";
+import { useKpiLocalitiesMap, useLocalityNodes } from "../hooks/useKPI";
+import { useOpenAlerts } from "../hooks/useRealtime";
 
 const LocalityView = () => {
+  const location = useLocation();
+  const { data: localities = [], isLoading: localitiesLoading } =
+    useKpiLocalitiesMap();
+  // Preselects the locality clicked on the map/bullet list in Vue Globale, if
+  // navigation carried one; otherwise falls back to the busiest locality below.
+  const [localityId, setLocalityId] = useState(
+    location.state?.localityId ?? null,
+  );
+
+  useEffect(() => {
+    if (!localityId && localities.length) {
+      setLocalityId(
+        [...localities].sort((a, b) => b.total_incidents - a.total_incidents)[0]
+          .locality_id,
+      );
+    }
+  }, [localities, localityId]);
+
+  const { data: localityDetail, isLoading: nodesLoading } =
+    useLocalityNodes(localityId);
+  const { data: alerts = [] } = useOpenAlerts(100);
+
+  const selectedLocalityName = localityDetail?.locality;
+  const localityIncidents = selectedLocalityName
+    ? alerts.filter((a) => a.locality === selectedLocalityName)
+    : [];
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-semibold text-gray-800">Vue par Localité</h2>
-        <select className="border border-gray-300 rounded px-4 py-2 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-          <option>Ouagadougou</option>
-          <option>Bobo-Dioulasso</option>
-          <option>Dédougou</option>
-        </select>
+      <div className="flex items-center gap-2">
+        <MapPin className="h-5 w-5" style={{ color: "var(--color-accent)" }} />
+        <div>
+          <h2
+            className="text-xl font-bold"
+            style={{ color: "var(--color-text-primary)" }}
+          >
+            Vue par Localité
+          </h2>
+          <p
+            className="text-sm"
+            style={{ color: "var(--color-text-secondary)" }}
+          >
+            Sélectionnez une localité sur la carte ou dans la liste pour
+            l'explorer
+          </p>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
+        <Card title="Sélection" className="lg:col-span-2">
+          {localitiesLoading ? (
+            <div
+              className="flex h-64 items-center justify-center text-sm"
+              style={{ color: "var(--color-text-muted)" }}
+            >
+              Chargement…
+            </div>
+          ) : (
+            <>
+              <BurkinaFasoMap
+                localities={localities}
+                selectedLocalityId={localityId}
+                onSelect={setLocalityId}
+                height="clamp(240px, calc(100vh - 620px), 420px)"
+              />
+              <div
+                className="mt-4 border-t pt-3"
+                style={{ borderColor: "var(--color-border)" }}
+              >
+                <LocalityBulletList
+                  localities={localities}
+                  selectedLocalityId={localityId}
+                  onSelect={setLocalityId}
+                  maxHeight="clamp(140px, calc(100vh - 740px), 260px)"
+                />
+              </div>
+            </>
+          )}
+        </Card>
+
         <div className="lg:col-span-1">
-          <NodeList />
+          <NodeList
+            nodes={localityDetail?.nodes ?? []}
+            loading={nodesLoading}
+          />
         </div>
+
         <div className="lg:col-span-2">
-          <IncidentTable title="Incidents Récents (Localité)" />
+          <IncidentTable
+            title={`Alertes ouvertes — ${selectedLocalityName ?? ""}`}
+            incidents={localityIncidents}
+            loading={nodesLoading}
+          />
         </div>
       </div>
     </div>

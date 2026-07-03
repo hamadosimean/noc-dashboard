@@ -1,16 +1,35 @@
-import React from 'react';
+import React from "react";
+import { useChartTheme } from "../../hooks/useChartTheme";
 
-const HourHeatmap = () => {
-  // Simple representation instead of a complex chart
+// Incident count per hour of day (H24), fed by GET /api/kpi/hour-distribution.
+// Sequential single-hue encoding: opacity of the accent color scales with
+// magnitude (near-zero fades toward the surface, peak hours saturate fully).
+const HourHeatmap = ({ hours = [] }) => {
+  const { categorical } = useChartTheme();
+  const accent = categorical[0];
+  const max = Math.max(1, ...hours.map((h) => h.total_incidents));
+
   return (
-    <div className="flex flex-col items-center justify-center h-full text-gray-500">
-      <div className="grid grid-cols-6 gap-1 w-full h-full p-2">
-        {Array.from({ length: 24 }).map((_, i) => (
-          <div key={i} className={`rounded ${i % 3 === 0 ? 'bg-red-200' : 'bg-green-100'} flex items-center justify-center text-xs`}>
-            {i}h
+    <div className="grid grid-cols-6 gap-1.5">
+      {hours.map((h) => {
+        const ratio = h.total_incidents / max;
+        const alpha = h.total_incidents === 0 ? 0.06 : 0.22 + ratio * 0.78;
+        return (
+          <div
+            key={h.hour}
+            title={`${h.total_incidents} incident(s) à ${h.hour}h`}
+            className="flex aspect-square items-center justify-center rounded-md text-[11px] font-semibold"
+            style={{
+              backgroundColor: `${accent}${Math.round(alpha * 255)
+                .toString(16)
+                .padStart(2, "0")}`,
+              color: ratio > 0.45 ? "#ffffff" : "var(--color-text-secondary)",
+            }}
+          >
+            {h.hour}h
           </div>
-        ))}
-      </div>
+        );
+      })}
     </div>
   );
 };

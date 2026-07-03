@@ -1,30 +1,87 @@
 import React from 'react';
+import { Database } from 'lucide-react';
+import Card from '../components/Card';
 import HourHeatmap from '../components/charts/HourHeatmap';
+import { useHourDistribution, useKpiRecurrent } from '../hooks/useKPI';
+import { STATUS } from '../theme/colors';
+
+const SCHEMA = [
+  ['dim_region', 'Régions administratives (13)'],
+  ['dim_locality', 'Localités, villes, et communes'],
+  ['dim_node', 'Granularité fine, routeurs, onduleurs, etc.'],
+  ['fact_incident', 'Table centrale de faits (Tickets, alertes)'],
+  ['mv_kpi_node_monthly', 'Vue matérialisée pour KPI rapides'],
+];
 
 const DataModelView = () => {
+  const { data: hours = [], isLoading: hoursLoading } = useHourDistribution();
+  const { data: recurrent = [], isLoading: recurrentLoading } = useKpiRecurrent(3);
+
   return (
     <div className="space-y-6">
-      <h2 className="text-2xl font-semibold text-gray-800">Modèle de Données & Analytics</h2>
-      
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-white p-6 rounded-lg shadow border border-gray-200">
-          <h3 className="font-medium text-lg mb-4">Architecture de la Base de Données</h3>
-          <ul className="list-disc pl-5 space-y-2 text-gray-700">
-            <li><strong>dim_region</strong> : Régions administratives (13)</li>
-            <li><strong>dim_locality</strong> : Localités, villes, et communes</li>
-            <li><strong>dim_node</strong> : Granularité fine, routeurs, onduleurs, etc.</li>
-            <li><strong>fact_incident</strong> : Table centrale de faits (Tickets, alertes)</li>
-            <li><strong>mv_kpi_node_monthly</strong> : Vue matérialisée pour KPI rapides</li>
-          </ul>
-        </div>
-        
-        <div className="bg-white p-6 rounded-lg shadow border border-gray-200">
-          <h3 className="font-medium text-lg mb-4">Distribution H24 (Heatmap)</h3>
-          <div className="h-48 border border-dashed border-gray-300 rounded bg-gray-50">
-            <HourHeatmap />
-          </div>
-        </div>
+      <div className="flex items-center gap-2">
+        <Database className="h-5 w-5" style={{ color: 'var(--color-accent)' }} />
+        <h2 className="text-xl font-bold" style={{ color: 'var(--color-text-primary)' }}>Modèle de Données & Analytics</h2>
       </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <Card title="Architecture de la Base de Données">
+          <ul className="space-y-3">
+            {SCHEMA.map(([table, desc]) => (
+              <li key={table} className="flex items-start gap-2 text-sm">
+                <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: 'var(--color-accent)' }} />
+                <span style={{ color: 'var(--color-text-secondary)' }}>
+                  <code className="rounded px-1.5 py-0.5 font-mono text-xs font-semibold" style={{ background: 'var(--color-surface-2)', color: 'var(--color-text-primary)' }}>
+                    {table}
+                  </code>{' '}
+                  : {desc}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Card>
+
+        <Card title="Distribution H24 (Heatmap)" subtitle="Incidents par heure de détection">
+          {hoursLoading ? (
+            <div className="flex h-48 items-center justify-center text-sm" style={{ color: 'var(--color-text-muted)' }}>
+              Chargement…
+            </div>
+          ) : (
+            <HourHeatmap hours={hours} />
+          )}
+        </Card>
+      </div>
+
+      <Card title="Nœuds récurrents" subtitle="≥ 3 incidents ce mois" bodyClassName={recurrent.length ? 'p-0' : 'p-5'}>
+        {recurrentLoading && <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>Chargement…</p>}
+        {!recurrentLoading && recurrent.length === 0 && (
+          <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>Aucun nœud récurrent ce mois-ci.</p>
+        )}
+        {recurrent.length > 0 && (
+          <div className="overflow-auto" style={{ maxHeight: 'clamp(240px, calc(100vh - 560px), 480px)' }}>
+            <table className="w-full">
+              <thead>
+                <tr style={{ color: 'var(--color-text-secondary)' }}>
+                  <th className="sticky top-0 z-10 border-b px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide" style={{ background: 'var(--color-surface)', borderColor: 'var(--color-border)' }}>Nœud</th>
+                  <th className="sticky top-0 z-10 border-b px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide" style={{ background: 'var(--color-surface)', borderColor: 'var(--color-border)' }}>Localité</th>
+                  <th className="sticky top-0 z-10 border-b px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide" style={{ background: 'var(--color-surface)', borderColor: 'var(--color-border)' }}>Incidents</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recurrent.map((n) => (
+                  <tr key={n.node_id} className="border-t hover:bg-[var(--color-surface-2)]" style={{ borderColor: 'var(--color-border)' }}>
+                    <td className="px-4 py-2.5 text-sm" style={{ color: 'var(--color-text-primary)' }}>
+                      <span className="font-mono text-xs" style={{ color: 'var(--color-text-secondary)' }}>{n.code}</span> — {n.name}
+                    </td>
+                    <td className="px-4 py-2.5 text-sm" style={{ color: 'var(--color-text-secondary)' }}>{n.locality}</td>
+                    <td className="px-4 py-2.5 text-sm font-bold tabular-nums" style={{ color: STATUS.critical }}>{n.total_incidents}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
     </div>
   );
 };

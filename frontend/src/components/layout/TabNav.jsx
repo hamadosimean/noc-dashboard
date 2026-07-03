@@ -12,21 +12,33 @@ const TabNav = () => {
   ];
 
   return (
-    <nav className="bg-white border-b border-gray-200 px-6 flex space-x-8">
+    <nav
+      className="sticky top-[57px] z-10 flex gap-1 overflow-x-auto border-b px-3 md:px-6"
+      style={{ background: 'var(--color-surface)', borderColor: 'var(--color-border)' }}
+    >
       {tabs.map((tab) => (
         <NavLink
           key={tab.path}
           to={tab.path}
           className={({ isActive }) =>
-            `flex items-center py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
-              isActive
-                ? 'border-blue-600 text-blue-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            `relative flex shrink-0 items-center gap-2 whitespace-nowrap px-3 py-3 text-sm font-medium transition-colors ${
+              isActive ? '' : 'hover:text-[var(--color-text-primary)]'
             }`
           }
+          style={({ isActive }) => ({
+            color: isActive ? 'var(--color-accent)' : 'var(--color-text-secondary)',
+          })}
         >
-          <tab.icon className="w-4 h-4 mr-2" />
-          {tab.name}
+          {({ isActive }) => (
+            <>
+              <tab.icon className="h-4 w-4" />
+              {tab.name}
+              <span
+                className="absolute inset-x-1 -bottom-px h-0.5 rounded-full transition-opacity"
+                style={{ background: 'var(--color-accent)', opacity: isActive ? 1 : 0 }}
+              />
+            </>
+          )}
         </NavLink>
       ))}
     </nav>
