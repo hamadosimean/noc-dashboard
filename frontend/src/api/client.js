@@ -1,8 +1,8 @@
-import axios from 'axios';
-import { useAuthStore } from '../store/auth';
+import axios from "axios";
+import { useAuthStore } from "../store/auth";
 
 const apiClient = axios.create({
-  baseURL: '/api',
+  baseURL: "/api",
   timeout: 10000,
 });
 
@@ -15,7 +15,10 @@ apiClient.interceptors.request.use((config) => {
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401 && !error.config?.url?.includes('/auth/')) {
+    if (
+      error.response?.status === 401 &&
+      !error.config?.url?.includes("/auth/")
+    ) {
       useAuthStore.getState().logout();
     }
     return Promise.reject(error);

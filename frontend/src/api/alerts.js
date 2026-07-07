@@ -1,7 +1,7 @@
-import apiClient from './client';
+import apiClient from "./client";
 
 export const getOpenAlerts = (limit = 20) =>
-  apiClient.get('/alerts/open', { params: { limit } }).then((r) => r.data);
+  apiClient.get("/alerts/open", { params: { limit } }).then((r) => r.data);
 
 export const acknowledgeIncident = (id) =>
   apiClient.patch(`/incidents/${id}/acknowledge`, {}).then((r) => r.data);

@@ -12,6 +12,7 @@ Re-run this script whenever the demo dataset needs to be regenerated:
     python3 database/generate_seed.py
 It is deterministic (fixed random seed) so the output is stable across runs.
 """
+
 import hashlib
 import random
 from datetime import datetime, timedelta, timezone
@@ -78,7 +79,13 @@ CAUSES = [
 ]
 
 FACILITY_NAMES = {
-    "Administratif": ["Gouvernorat", "Préfecture", "Mairie", "DREP", "Haut-Commissariat"],
+    "Administratif": [
+        "Gouvernorat",
+        "Préfecture",
+        "Mairie",
+        "DREP",
+        "Haut-Commissariat",
+    ],
     "Santé": ["Hôpital Régional", "CHU", "CSPS", "District Sanitaire"],
     "Financier": ["Trésor Public", "Perception", "Douanes"],
     "Éducatif": ["Direction Régionale Éducation", "Lycée Public", "Université"],
@@ -143,7 +150,9 @@ def month_bounds(dt_ref: datetime, offset: int):
 
 def main():
     out = []
-    out.append("-- Auto-generated demo dataset. Regenerate with: python3 database/generate_seed.py")
+    out.append(
+        "-- Auto-generated demo dataset. Regenerate with: python3 database/generate_seed.py"
+    )
     out.append("-- Do not hand-edit; edit generate_seed.py instead.\n")
 
     # --- dim_region ---
@@ -160,7 +169,9 @@ def main():
     locality_rows = []
     for i, (code, name, region_code, lat, lon, pop) in enumerate(LOCALITIES, start=1):
         locality_id_by_code[code] = i
-        locality_rows.append((i, region_id_by_code[region_code], code, name, lat, lon, pop))
+        locality_rows.append(
+            (i, region_id_by_code[region_code], code, name, lat, lon, pop)
+        )
     out.append(
         insert_stmt(
             "dim_locality",
@@ -194,7 +205,9 @@ def main():
             code = f"{locality_code}-{seq:03d}"
             name = f"{facility} {locality_name}"
             source_tool = SOURCE_TOOLS[node_id % len(SOURCE_TOOLS)]
-            ip_address = f"10.{(node_id // 254) % 254}.{node_id % 254}.{(node_id * 7) % 254 + 1}"
+            ip_address = (
+                f"10.{(node_id // 254) % 254}.{node_id % 254}.{(node_id * 7) % 254 + 1}"
+            )
             itop_ci_id = f"CI-{node_id:05d}"
             is_active = random.random() > 0.03
             node_rows.append(
@@ -215,8 +228,15 @@ def main():
         insert_stmt(
             "dim_node",
             [
-                "id", "locality_id", "code", "name", "node_type",
-                "ip_address", "source_tool", "itop_ci_id", "is_active",
+                "id",
+                "locality_id",
+                "code",
+                "name",
+                "node_type",
+                "ip_address",
+                "source_tool",
+                "itop_ci_id",
+                "is_active",
             ],
             node_rows,
         )
@@ -225,7 +245,9 @@ def main():
 
     # --- fact_incident ---
     # Pick ~15 nodes to be "recurrent offenders" so /kpi/recurrent has real signal.
-    recurrent_nodes = set(random.sample([n[0] for n in node_ids], k=min(15, len(node_ids))))
+    recurrent_nodes = set(
+        random.sample([n[0] for n in node_ids], k=min(15, len(node_ids)))
+    )
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     incident_rows = []
@@ -235,15 +257,19 @@ def main():
     for month_offset in range(MONTHS_OF_HISTORY - 1, -1, -1):
         start, end = month_bounds(now, month_offset)
         is_current_month = month_offset == 0
-        span_seconds = int((min(end, now) - start).total_seconds()) if is_current_month else int(
-            (end - start).total_seconds()
+        span_seconds = (
+            int((min(end, now) - start).total_seconds())
+            if is_current_month
+            else int((end - start).total_seconds())
         )
         span_seconds = max(span_seconds, 3600)
 
         for node_id_val, code, locality_code in node_ids:
-            base_count = 6 if node_id_val in recurrent_nodes else random.choices(
-                [0, 1, 2, 3], weights=[35, 35, 20, 10]
-            )[0]
+            base_count = (
+                6
+                if node_id_val in recurrent_nodes
+                else random.choices([0, 1, 2, 3], weights=[35, 35, 20, 10])[0]
+            )
             n_incidents = base_count if node_id_val in recurrent_nodes else base_count
             if node_id_val in recurrent_nodes:
                 n_incidents = random.randint(4, 9)
@@ -265,7 +291,8 @@ def main():
                 elif month_offset == 1:
                     # Previous month: a handful of incidents can still be genuinely open.
                     status = random.choices(
-                        ["resolved", "closed", "acknowledged", "open"], weights=[50, 40, 7, 3]
+                        ["resolved", "closed", "acknowledged", "open"],
+                        weights=[50, 40, 7, 3],
                     )[0]
                 else:
                     # Older months: fully triaged, nothing realistically stays open this long.
@@ -275,12 +302,22 @@ def main():
                 resolved_at = None
                 downtime_minutes = 0
                 if status in ("acknowledged", "resolved", "closed"):
-                    acknowledged_at = detected_at + timedelta(minutes=random.randint(2, 45))
+                    acknowledged_at = detected_at + timedelta(
+                        minutes=random.randint(2, 45)
+                    )
                 if status in ("resolved", "closed"):
-                    resolved_at = acknowledged_at + timedelta(minutes=random.randint(10, 480))
-                    downtime_minutes = int((resolved_at - detected_at).total_seconds() // 60)
+                    resolved_at = acknowledged_at + timedelta(
+                        minutes=random.randint(10, 480)
+                    )
+                    downtime_minutes = int(
+                        (resolved_at - detected_at).total_seconds() // 60
+                    )
                 elif status == "acknowledged":
-                    downtime_minutes = int((now - detected_at).total_seconds() // 60) if is_current_month else 0
+                    downtime_minutes = (
+                        int((now - detected_at).total_seconds() // 60)
+                        if is_current_month
+                        else 0
+                    )
 
                 category, label = random.choice(CAUSES)
                 cause_id = cause_id_by_pair[(category, label)]
@@ -317,9 +354,19 @@ def main():
         insert_stmt(
             "fact_incident",
             [
-                "id", "node_id", "cause_id", "itop_ticket_id", "external_id",
-                "status", "severity", "detected_at", "acknowledged_at", "resolved_at",
-                "downtime_minutes", "source_tool", "description",
+                "id",
+                "node_id",
+                "cause_id",
+                "itop_ticket_id",
+                "external_id",
+                "status",
+                "severity",
+                "detected_at",
+                "acknowledged_at",
+                "resolved_at",
+                "downtime_minutes",
+                "source_tool",
+                "description",
             ],
             incident_rows,
         )
@@ -343,7 +390,9 @@ def main():
     ]
     user_rows = [
         (i, username, full_name, role, bcrypt_hash(password), pin_hash(pin))
-        for i, (username, full_name, role, password, pin) in enumerate(DEMO_USERS, start=1)
+        for i, (username, full_name, role, password, pin) in enumerate(
+            DEMO_USERS, start=1
+        )
     ]
     out.append(
         insert_stmt(

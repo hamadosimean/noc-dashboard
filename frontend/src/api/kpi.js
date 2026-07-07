@@ -38,7 +38,9 @@ export const getLocalityNodes = (localityId, month, year) =>
     .then((r) => r.data);
 
 export const getCauses = (month, year) =>
-  apiClient.get('/kpi/causes', { params: { month, year } }).then((r) => r.data);
+  apiClient.get("/kpi/causes", { params: { month, year } }).then((r) => r.data);
 
 export const getLocalitiesMap = (month, year) =>
-  apiClient.get('/kpi/localities/map', { params: { month, year } }).then((r) => r.data);
+  apiClient
+    .get("/kpi/localities/map", { params: { month, year } })
+    .then((r) => r.data);

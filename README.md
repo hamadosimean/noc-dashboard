@@ -389,7 +389,7 @@ After starting the project, the following services are available:
 
 | Service | URL | Description |
 |---|---|---|
-| **Application (via NGINX, HTTPS)** | https://localhost:8443 | Main entry point — self-signed cert, browser will warn |
+| **Application (via NGINX, HTTPS)** | http://localhost:8888 | Main entry point — self-signed cert, browser will warn |
 | **Application (via NGINX, HTTP)** | http://localhost:8888 | Redirects (301) to the HTTPS URL above |
 | **Frontend** | http://localhost:3000 | React dashboard UI, direct (no TLS) |
 | **Backend API** | http://localhost:8000 | FastAPI REST API, direct (no TLS) |

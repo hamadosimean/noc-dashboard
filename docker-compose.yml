@@ -38,8 +38,9 @@ services:
       timeout: 5s
       retries: 5
 
-  etl:
+  etl-worker:
     build: ./etl
+    command: celery -A celery_app worker --loglevel=${LOG_LEVEL:-INFO} --concurrency=2
     environment:
       - DB_HOST=${POSTGRES_HOST}
       - DB_PORT=${POSTGRES_PORT}
@@ -48,8 +49,30 @@ services:
       - DB_NAME=${POSTGRES_DB}
       - NOC_API_URL=http://backend:8000
       - NOC_API_KEY=${NOC_API_KEY}
+      - REDIS_HOST=${REDIS_HOST}
+      - REDIS_PORT=${REDIS_PORT}
+      - CELERY_BROKER_DB=${CELERY_BROKER_DB:-1}
     depends_on:
       backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "celery", "-A", "celery_app", "inspect", "ping", "-d", "celery@$$HOSTNAME"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  etl-beat:
+    build: ./etl
+    command: celery -A celery_app beat --loglevel=${LOG_LEVEL:-INFO}
+    environment:
+      - REDIS_HOST=${REDIS_HOST}
+      - REDIS_PORT=${REDIS_PORT}
+      - CELERY_BROKER_DB=${CELERY_BROKER_DB:-1}
+      - ETL_COLLECT_INTERVAL_S=${ETL_COLLECT_INTERVAL_S:-30}
+    depends_on:
+      redis:
         condition: service_healthy
 
   frontend:
@@ -95,7 +118,8 @@ services:
   nginx:
     build: ./nginx
     ports:
-      - "8888:443"
+      - "8888:80"
+      - "8443:443"
     volumes:
       - ./nginx/certs:/etc/nginx/certs:ro
     depends_on:

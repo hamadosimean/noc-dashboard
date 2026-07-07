@@ -27,7 +27,12 @@ def hash_pin(pin: str) -> str:
 
 def create_access_token(user: User) -> str:
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=JWT_EXPIRATION_MINUTES)
-    payload = {"sub": str(user.id), "username": user.username, "role": user.role, "exp": expires_at}
+    payload = {
+        "sub": str(user.id),
+        "username": user.username,
+        "role": user.role,
+        "exp": expires_at,
+    }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
@@ -39,7 +44,11 @@ def decode_access_token(token: str) -> dict:
 
 
 def authenticate_with_password(db: Session, username: str, password: str) -> User:
-    user = db.query(User).filter(User.username == username, User.is_active.is_(True)).first()
+    user = (
+        db.query(User)
+        .filter(User.username == username, User.is_active.is_(True))
+        .first()
+    )
     if user is None or not verify_password(password, user.password_hash):
         raise HTTPException(status_code=401, detail="Identifiants invalides")
     _touch_last_login(db, user)
@@ -47,7 +56,11 @@ def authenticate_with_password(db: Session, username: str, password: str) -> Use
 
 
 def authenticate_with_pin(db: Session, pin: str) -> User:
-    user = db.query(User).filter(User.pin_hash == hash_pin(pin), User.is_active.is_(True)).first()
+    user = (
+        db.query(User)
+        .filter(User.pin_hash == hash_pin(pin), User.is_active.is_(True))
+        .first()
+    )
     if user is None:
         raise HTTPException(status_code=401, detail="Code PIN invalide")
     _touch_last_login(db, user)

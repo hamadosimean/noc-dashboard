@@ -214,12 +214,16 @@ const Login = () => {
         }}
       >
         <div className="mb-6 flex flex-col items-center text-center">
-          <img src={logo} alt="NOC ANPTIC" className="mb-3 h-14 w-14 rounded-xl" />
+          <img
+            src={logo}
+            alt="NOC ANPTIC"
+            className="mb-3 h-14 w-14 rounded-xl"
+          />
           <h1
             className="text-lg font-bold"
             style={{ color: "var(--color-text-primary)" }}
           >
-            NOC ANPTIC
+            NOC
           </h1>
           <p
             className="text-sm"

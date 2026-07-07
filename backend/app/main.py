@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.constants import CACHE_TTL, CORS_ORIGINS
 from app.routes import all_routers
 
-app = FastAPI(title="NOC ANPTIC Dashboard API", version="1.0.0")
+app = FastAPI(title="NOC Dashboard API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -20,4 +20,4 @@ for router in all_routers:
 
 @app.get("/")
 def read_root():
-    return {"message": "NOC ANPTIC API is running", "cache_ttl": CACHE_TTL}
+    return {"message": "NOC Dashboard API is running", "cache_ttl": CACHE_TTL}
