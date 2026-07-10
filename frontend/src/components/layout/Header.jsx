@@ -1,9 +1,17 @@
 import React, { useState } from "react";
-import { ChevronLeft, ChevronRight, LogOut, Moon, Sun } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  FileDown,
+  LogOut,
+  Moon,
+  Sun,
+} from "lucide-react";
 import { usePeriodStore } from "../../store";
 import { useThemeStore } from "../../store/theme";
 import { useAuthStore } from "../../store/auth";
 import { useClock } from "../../hooks/useClock";
+import { downloadMonthlyReport } from "../../api/report";
 import logo from "../../assets/images/noc-logo-256.png";
 
 const MONTH_LABELS = [
@@ -19,6 +27,22 @@ const MONTH_LABELS = [
   "Octobre",
   "Novembre",
   "Décembre",
+];
+
+// Compact labels so the period selector fits on phone-width headers
+const MONTH_LABELS_SHORT = [
+  "Janv.",
+  "Févr.",
+  "Mars",
+  "Avr.",
+  "Mai",
+  "Juin",
+  "Juil.",
+  "Août",
+  "Sept.",
+  "Oct.",
+  "Nov.",
+  "Déc.",
 ];
 
 const ROLE_LABEL = {
@@ -40,7 +64,21 @@ const Header = () => {
   const { theme, toggleTheme } = useThemeStore();
   const { user, logout } = useAuthStore();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const now = useClock();
+
+  const exportReport = async (format) => {
+    setExportOpen(false);
+    setExporting(true);
+    try {
+      await downloadMonthlyReport(month, year, format);
+    } catch (error) {
+      console.error("Export du rapport échoué:", error);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const timeLabel = now.toLocaleTimeString("fr-FR", {
     hour: "2-digit",
@@ -70,7 +108,7 @@ const Header = () => {
             <span className="relative inline-flex h-3 w-3 rounded-full bg-emerald-500 ring-2 ring-[var(--color-surface)]" />
           </span> */}
         </div>
-        <div className="leading-tight">
+        <div className="hidden leading-tight min-[420px]:block">
           <h1 className="text-base font-bold tracking-tight md:text-lg">NOC</h1>
           <p
             className="hidden text-xs sm:block"
@@ -81,7 +119,7 @@ const Header = () => {
         </div>
       </div>
 
-      <div className="flex items-center gap-2 md:gap-4">
+      <div className="flex items-center gap-1.5 sm:gap-2 md:gap-4">
         <div
           className="hidden items-center gap-2 rounded-lg border px-3 py-1.5 font-mono text-xs lg:flex"
           style={{
@@ -113,8 +151,13 @@ const Header = () => {
           >
             <ChevronLeft className="h-4 w-4" />
           </button>
-          <span className="w-24 text-center text-xs font-semibold sm:w-32 sm:text-sm">
-            {MONTH_LABELS[month - 1]} {year}
+          <span className="w-20 text-center text-xs font-semibold sm:w-32 sm:text-sm">
+            <span className="sm:hidden">
+              {MONTH_LABELS_SHORT[month - 1]} {year}
+            </span>
+            <span className="hidden sm:inline">
+              {MONTH_LABELS[month - 1]} {year}
+            </span>
           </span>
           <button
             onClick={goToNextMonth}
@@ -123,6 +166,56 @@ const Header = () => {
           >
             <ChevronRight className="h-4 w-4" />
           </button>
+        </div>
+
+        <div className="relative">
+          <button
+            onClick={() => setExportOpen((v) => !v)}
+            disabled={exporting}
+            className="rounded-lg border p-2 transition-colors hover:bg-[var(--color-surface-2)] disabled:opacity-50"
+            style={{ borderColor: "var(--color-border)" }}
+            aria-label="Exporter le rapport mensuel"
+            title="Exporter le rapport mensuel"
+          >
+            <FileDown className="h-4 w-4" />
+          </button>
+          {exportOpen && (
+            <>
+              <div
+                className="fixed inset-0 z-30"
+                onClick={() => setExportOpen(false)}
+              />
+              <div
+                className="absolute right-0 z-40 mt-2 w-44 rounded-lg border p-2 text-sm"
+                style={{
+                  background: "var(--color-surface)",
+                  borderColor: "var(--color-border-strong)",
+                  boxShadow: "var(--shadow-elevate)",
+                }}
+              >
+                <p
+                  className="px-2 py-1 text-xs font-semibold uppercase tracking-wide"
+                  style={{ color: "var(--color-text-secondary)" }}
+                >
+                  Rapport {MONTH_LABELS[month - 1]} {year}
+                </p>
+                <button
+                  onClick={() => exportReport("pdf")}
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-[var(--color-surface-2)]"
+                >
+                  <FileDown className="h-4 w-4" />
+                  Export PDF
+                </button>
+                <button
+                  onClick={() => exportReport("docx")}
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-[var(--color-surface-2)]"
+                >
+                  <FileDown className="h-4 w-4" />
+                  Export DOCX
+                </button>
+              </div>
+            </>
+          )}
         </div>
 
         <button
@@ -141,7 +234,7 @@ const Header = () => {
           )}
         </button>
 
-        <div className="relative hidden sm:block">
+        <div className="relative">
           <button
             onClick={() => setMenuOpen((v) => !v)}
             className="flex h-8 w-8 items-center justify-center rounded-full bg-[var(--color-accent-soft)] text-xs font-bold text-[var(--color-accent)]"

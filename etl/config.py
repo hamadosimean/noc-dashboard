@@ -22,3 +22,5 @@ def broker_url() -> str:
 NOC_API_URL = os.getenv("NOC_API_URL", "http://backend:8000")
 NOC_API_KEY = os.getenv("NOC_API_KEY", "dev-noc-api-key")
 COLLECT_INTERVAL_S = int(os.getenv("ETL_COLLECT_INTERVAL_S", "30"))
+# Where the scheduled end-of-month exports are written (mounted volume).
+REPORTS_DIR = os.getenv("REPORTS_DIR", "/reports")

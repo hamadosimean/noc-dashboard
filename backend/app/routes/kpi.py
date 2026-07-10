@@ -3,10 +3,18 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from app.core.rate_limit import read_rate_limit
+from app.core.security import get_current_user
 from app.db.session import get_db
 from app.services import cache_service, kpi_service
 
-router = APIRouter(prefix="/api/kpi", tags=["kpi"])
+# All KPI reads require a logged-in user (any role — analyst included) and are
+# rate-limited per spec §10.1.
+router = APIRouter(
+    prefix="/api/kpi",
+    tags=["kpi"],
+    dependencies=[Depends(get_current_user), Depends(read_rate_limit)],
+)
 
 
 @router.get("/summary")
@@ -114,6 +122,21 @@ def kpi_hour_distribution(
     return data
 
 
+@router.get("/compare")
+def kpi_compare(
+    month: int = Query(..., ge=1, le=12),
+    year: int = Query(...),
+    db: Session = Depends(get_db),
+):
+    cache_key = f"kpi:compare:{year}:{month}"
+    cached = cache_service.get_cached(cache_key)
+    if cached is not None:
+        return cached
+    data = kpi_service.get_comparison(db, month, year)
+    cache_service.set_cached(cache_key, data)
+    return data
+
+
 @router.get("/causes")
 def kpi_causes(month: int = Query(..., ge=1, le=12), year: int = Query(...), db: Session = Depends(get_db)):
     cache_key = f"kpi:causes:{year}:{month}"
@@ -125,7 +148,11 @@ def kpi_causes(month: int = Query(..., ge=1, le=12), year: int = Query(...), db:
     return data
 
 
-locality_router = APIRouter(prefix="/api/locality", tags=["kpi"])
+locality_router = APIRouter(
+    prefix="/api/locality",
+    tags=["kpi"],
+    dependencies=[Depends(get_current_user), Depends(read_rate_limit)],
+)
 
 
 @locality_router.get("/{locality_id}/nodes")

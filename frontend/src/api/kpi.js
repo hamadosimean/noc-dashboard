@@ -44,3 +44,8 @@ export const getLocalitiesMap = (month, year) =>
   apiClient
     .get("/kpi/localities/map", { params: { month, year } })
     .then((r) => r.data);
+
+export const getCompare = (month, year) =>
+  apiClient
+    .get("/kpi/compare", { params: { month, year } })
+    .then((r) => r.data);

@@ -2,6 +2,7 @@ import logging
 import os
 
 from celery import Celery
+from celery.schedules import crontab
 
 from config import COLLECT_INTERVAL_S, broker_url
 
@@ -26,6 +27,16 @@ app.conf.update(
             "task": "etl.collect_incident",
             "schedule": float(COLLECT_INTERVAL_S),
             "options": {"expires": COLLECT_INTERVAL_S},
+        },
+        # Spec §2.2 — nightly recompute of the monthly KPI materialized view.
+        "refresh-kpi-view-nightly": {
+            "task": "etl.refresh_kpi_view",
+            "schedule": crontab(hour=2, minute=0),
+        },
+        # Spec §1.2 (P1) — automatic end-of-month report, archived after the refresh.
+        "generate-monthly-report": {
+            "task": "etl.generate_monthly_report",
+            "schedule": crontab(day_of_month=1, hour=2, minute=30),
         },
     },
 )

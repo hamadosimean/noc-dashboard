@@ -90,8 +90,11 @@ const BurkinaFasoMap = ({
 
   return (
     <div className="w-full">
+      {/* `isolate z-0` traps Leaflet's internal z-indexes (panes go up to 1000)
+          inside this box, so the map can't paint over the sticky header (z-20)
+          when the page scrolls. */}
       <div
-        className={`relative w-full overflow-hidden rounded-lg border ${theme === "dark" ? "leaflet-dark-map" : ""}`}
+        className={`relative isolate z-0 w-full overflow-hidden rounded-lg border ${theme === "dark" ? "leaflet-dark-map" : ""}`}
         style={{ height, borderColor: "var(--color-border)" }}
       >
         <MapContainer
@@ -101,13 +104,11 @@ const BurkinaFasoMap = ({
           minZoom={6}
           maxZoom={12}
           scrollWheelZoom={false}
+          attributionControl={false}
           style={{ height: "100%", width: "100%" }}
         >
           <ScrollZoomGate onFocus={() => setFocused(true)} />
-          <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          />
+          <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
           {points.map((p) => (
             <Marker
               key={p.locality_id}

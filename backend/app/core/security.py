@@ -17,7 +17,9 @@ def verify_api_key(authorization: str = Header(default="")) -> None:
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 
-def get_current_user(authorization: str = Header(default=""), db: Session = Depends(get_db)) -> User:
+def get_current_user(
+    authorization: str = Header(default=""), db: Session = Depends(get_db)
+) -> User:
     """JWT-bearer auth for dashboard-driven actions (e.g. acknowledge/resolve)."""
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Not authenticated")
@@ -27,3 +29,30 @@ def get_current_user(authorization: str = Header(default=""), db: Session = Depe
     if user is None or not user.is_active:
         raise HTTPException(status_code=401, detail="Not authenticated")
     return user
+
+
+def require_role(*roles: str):
+    """RBAC per spec §10.1 — admin (read+write), analyst (read-only),
+    noc_agent (read + acknowledge)."""
+
+    def dependency(current_user: User = Depends(get_current_user)) -> User:
+        if current_user.role not in roles:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Role '{current_user.role}' is not allowed for this action",
+            )
+        return current_user
+
+    return dependency
+
+
+def verify_user_or_api_key(
+    authorization: str = Header(default=""), db: Session = Depends(get_db)
+) -> None:
+    """Accept either a dashboard JWT or the static NOC API key.
+
+    Used on /api/report/monthly so the scheduled ETL export (which only holds
+    the webhook API key) can pull the end-of-month report."""
+    if authorization == f"Bearer {NOC_API_KEY}":
+        return
+    get_current_user(authorization, db)

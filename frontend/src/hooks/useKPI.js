@@ -77,6 +77,14 @@ export const useKpiLocalitiesMap = () => {
   });
 };
 
+export const useKpiCompare = () => {
+  const { month, year } = usePeriodStore();
+  return useQuery({
+    queryKey: ['kpi', 'compare', year, month],
+    queryFn: () => kpiApi.getCompare(month, year),
+  });
+};
+
 export const useSLA = () => {
   const { month, year } = usePeriodStore();
   return useQuery({

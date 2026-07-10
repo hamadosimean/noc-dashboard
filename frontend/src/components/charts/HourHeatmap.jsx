@@ -10,7 +10,7 @@ const HourHeatmap = ({ hours = [] }) => {
   const max = Math.max(1, ...hours.map((h) => h.total_incidents));
 
   return (
-    <div className="grid grid-cols-6 gap-1.5">
+    <div className="grid grid-cols-6 gap-1.5 sm:grid-cols-8 xl:grid-cols-12">
       {hours.map((h) => {
         const ratio = h.total_incidents / max;
         const alpha = h.total_incidents === 0 ? 0.06 : 0.22 + ratio * 0.78;

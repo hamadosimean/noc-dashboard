@@ -1,10 +1,16 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
+from app.core.rate_limit import read_rate_limit
+from app.core.security import get_current_user
 from app.db.session import get_db
 from app.services import cache_service, kpi_service
 
-router = APIRouter(prefix="/api/sla", tags=["sla"])
+router = APIRouter(
+    prefix="/api/sla",
+    tags=["sla"],
+    dependencies=[Depends(get_current_user), Depends(read_rate_limit)],
+)
 
 
 @router.get("")

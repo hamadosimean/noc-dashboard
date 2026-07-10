@@ -25,6 +25,7 @@
 - [Integrations](#integrations)
 - [API Documentation](#api-documentation)
 - [Demo Data & Simulator](#demo-data--simulator)
+- [Further Documentation](#further-documentation)
 - [Contributing](#contributing)
 
 ---
@@ -74,12 +75,13 @@ The application follows a **containerized 3-tier architecture** orchestrated via
 
 | Layer | Technology | Role |
 |---|---|---|
-| **Frontend** | React 19 + Vite | Interactive real-time dashboard UI |
-| **Backend** | FastAPI (Python 3.12) | REST API, KPI computation, webhooks, JWT auth |
+| **Frontend** | React 19 + Vite | Interactive real-time dashboard UI (WebSocket push + polling fallback) |
+| **Backend** | FastAPI (Python 3.12) | REST API, KPI computation, webhooks, JWT auth + RBAC, rate limiting, WebSocket alert stream, PDF/DOCX reports |
 | **Database** | PostgreSQL 15 | Persistent storage (dimensions, incidents, users) |
-| **Cache** | Redis 7 | KPI caching, performance optimization |
-| **Proxy** | NGINX | TLS termination, HTTP→HTTPS redirect, reverse proxy |
-| **ETL** | Python | Simulates supervision-tool webhooks so the demo feels live |
+| **Cache** | Redis 7 | KPI caching, rate-limit counters, Celery broker, alert pub/sub |
+| **Proxy** | NGINX | TLS termination, HTTP→HTTPS redirect, reverse proxy (`/api`, `/ws`) |
+| **ETL** | Python + Celery | Simulates supervision-tool webhooks; nightly KPI refresh (02:00); end-of-month report archive |
+| **Notifications** | Twilio + SMTP | SMS + email to the NOC on critical incidents (off by default) |
 
 ---
 
@@ -90,9 +92,13 @@ The application follows a **containerized 3-tier architecture** orchestrated via
 - **[SQLAlchemy](https://www.sqlalchemy.org/)** `2.0.36` — Python ORM
 - **[Uvicorn](https://www.uvicorn.org/)** `0.23.2` — ASGI server
 - **[Psycopg2](https://www.psycopg.org/)** `2.9.10` — PostgreSQL adapter
-- **[Redis-py](https://redis-py.readthedocs.io/)** `5.0.0` — Redis client
+- **[Redis-py](https://redis-py.readthedocs.io/)** `5.0.0` — Redis client (cache, rate limiting, pub/sub)
 - **[fpdf2](https://pypi.org/project/fpdf2/)** `2.7.9` — Monthly report PDF export
+- **[python-docx](https://pypi.org/project/python-docx/)** `1.1.2` — Monthly report DOCX export
+- **[websockets](https://pypi.org/project/websockets/)** `12.0` — WebSocket support for the `/ws/alerts` stream
+- **[Requests](https://pypi.org/project/requests/)** `2.32.3` — Outbound HTTP (Twilio SMS API)
 - **[Python-dotenv](https://pypi.org/project/python-dotenv/)** `1.0.0` — Environment variable management
+- **[pytest](https://pytest.org/) + [httpx](https://www.python-httpx.org/)** *(dev)* — Backend test suite (`backend/tests/`)
 
 ### Frontend
 - **[React](https://react.dev/)** `19` — UI library
@@ -163,14 +169,17 @@ noc/
 ├── backend/                      # FastAPI application (Python 3.12)
 │   ├── Dockerfile
 │   ├── requirements.txt
+│   ├── requirements-dev.txt      # + pytest/httpx for the test suite
+│   ├── pytest.ini
+│   ├── tests/                    # Backend test suite (auth, RBAC, rate limiting, ingest flow, reports…)
 │   └── app/
 │       ├── main.py               # FastAPI entry point, CORS + router wiring
-│       ├── core/                 # Config/constants, security (JWT + webhook API key)
+│       ├── core/                 # Config/constants, security (JWT + RBAC + webhook API key), rate limiting
 │       ├── db/                   # SQLAlchemy session & Redis client
 │       ├── models/               # SQLAlchemy ORM models (dimensions, fact_incident, dim_user)
 │       ├── schemas/               # Pydantic request/response schemas
-│       ├── routes/               # REST endpoint routers (/api/kpi, /api/sla, /api/alerts, /api/incidents, /api/auth, /api/report)
-│       └── services/             # Business logic (KPI queries, incident lifecycle, cache, auth, iTop stub, PDF report)
+│       ├── routes/               # REST routers (/api/kpi, /api/sla, /api/alerts, /api/incidents, /api/auth, /api/report) + /ws/alerts WebSocket
+│       └── services/             # Business logic (KPI queries, incident lifecycle, cache, auth, iTop stub, PDF/DOCX report, notifications, alert broadcast)
 │
 ├── frontend/                     # React application (Vite)
 │   ├── Dockerfile
@@ -195,12 +204,18 @@ noc/
 │       ├── pages/                # Login + dashboard views (Global, Localities, SLA, Interop, Data Model)
 │       └── store/                # Zustand stores: period, theme, auth (persisted)
 │
-└── etl/                          # Simulated collector service (see "Demo Data & Simulator" below)
-    ├── app.py                    # Entry point: waits for the API, then runs the collector loop
-    ├── extract/                  # Per-tool event simulators (Zabbix/Nagios/NetXMS/Centreon)
-    ├── transform/                # Normalizes simulator events into the ingest payload shape
-    └── load/                     # Posts normalized incidents to /api/incidents/ingest
+└── etl/                          # Collector + scheduled jobs service (see "Demo Data & Simulator" below)
+    ├── celery_app.py              # Celery app + beat schedule: collect_incident (every ETL_COLLECT_INTERVAL_S),
+    │                              #   refresh_kpi_view (daily 02:00), generate_monthly_report (1st of month, 02:30)
+    ├── config.py                  # DB DSN / broker URL / API URL / REPORTS_DIR helpers
+    ├── pipelines/                 # collector.py (loads active nodes), tasks.py (the Celery tasks)
+    ├── extract/                   # Per-tool event simulators (Zabbix/Nagios/NetXMS/Centreon)
+    ├── transform/                 # Normalizes simulator events into the ingest payload shape
+    └── load/                      # Posts incidents to /api/incidents/ingest; downloads monthly reports
 ```
+
+Two containers run this image: `etl-beat` (Celery scheduler) and `etl-worker`
+(Celery worker) — see [docs/architecture.md](docs/architecture.md).
 
 ---
 
@@ -261,6 +276,29 @@ CENTREON_API_KEY=your_centreon_api_key
 
 NAGIOS_API_URL=http://your-nagios-host/
 NAGIOS_API_KEY=your_nagios_api_key
+
+# ── Notifications (SMS/email on critical incidents) ──────
+NOTIFICATIONS_ENABLED=false              # Flip to true once Twilio/SMTP are configured
+TWILIO_ACCOUNT_SID=
+TWILIO_AUTH_TOKEN=
+TWILIO_FROM_NUMBER=
+NOC_SMS_RECIPIENTS=+22670000000          # Comma-separated
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_USER=
+SMTP_PASSWORD=
+SMTP_FROM=noc@anptic.bf
+NOC_EMAIL_RECIPIENTS=noc@anptic.bf       # Comma-separated
+
+# ── Rate limiting (per IP, per minute — spec §10.1) ──────
+RATE_LIMIT_ENABLED=true
+RATE_LIMIT_READ_PER_MIN=100
+RATE_LIMIT_INGEST_PER_MIN=10
+
+# ── Materialized view refresh ────────────────────────────
+# true (demo): refresh mv_kpi_node_monthly on every write, keeps small datasets
+# interactive. false (production): rely on the nightly 02:00 ETL refresh only.
+SYNC_MV_REFRESH=true
 ```
 
 > **⚠️ Security Note:** The `.env` file is listed in `.gitignore`. Never commit real credentials to source control. For production, use a secrets manager.
@@ -389,7 +427,7 @@ After starting the project, the following services are available:
 
 | Service | URL | Description |
 |---|---|---|
-| **Application (via NGINX, HTTPS)** | http://localhost:8888 | Main entry point — self-signed cert, browser will warn |
+| **Application (via NGINX, HTTPS)** | https://localhost:8443 | Main entry point — self-signed cert, browser will warn |
 | **Application (via NGINX, HTTP)** | http://localhost:8888 | Redirects (301) to the HTTPS URL above |
 | **Frontend** | http://localhost:3000 | React dashboard UI, direct (no TLS) |
 | **Backend API** | http://localhost:8000 | FastAPI REST API, direct (no TLS) |
@@ -424,6 +462,8 @@ The "Vue Globale" and "Vue par Localité" tabs render a real **Leaflet + OpenStr
 
 - **Markers**: colored by availability (green ≥97%, amber 90–97%, red <90%), sized by incident volume (`sqrt` scale), with a pulsing ring on critical ones. Hover for a tooltip, click to select.
 - **Dark mode**: OSM only publishes one (light) cartography, so dark mode applies a CSS filter (`invert + hue-rotate + contrast`) scoped to just the tile pane in `index.css` (`.leaflet-dark-map .leaflet-tile-pane`) — markers/popups are on a separate pane and stay unaffected.
+- **Stacking**: the map wrapper uses `isolate z-0` so Leaflet's internal z-indexes (up to 1000) can't paint over the sticky header/tab bar while scrolling.
+- **Attribution**: the default "Leaflet | © OpenStreetMap" control is disabled (`attributionControl={false}`) for a cleaner internal-dashboard look. ⚠️ Tiles still come from the free `tile.openstreetmap.org` servers, whose [usage policy](https://operations.osmfoundation.org/policies/tiles/) requires visible attribution — restore the credit or switch to a self-hosted/commercial tile provider before any public deployment.
 - **Scroll-zoom gating**: the map requires one click before the scroll wheel zooms it (with a fading hint chip), so scrolling the dashboard page over the map doesn't get hijacked into zooming it — a standard embedded-map pattern.
 - **Bounded**: `maxBounds`/`minZoom`/`maxZoom` keep panning/zooming scoped to Burkina Faso.
 - **`LocalityBulletList`** (the panel next to the map) is the same data as a plain clickable list — a table-view/keyboard-accessible companion to the map, not just decoration.
@@ -451,9 +491,24 @@ Demo accounts (seeded by `database/generate_seed.py`):
 
 The frontend stores the JWT in `localStorage` (zustand `persist`, see
 `frontend/src/store/auth.js`) and attaches it to every API call via an axios
-request interceptor; a 401 response anywhere logs the session out. Only the
-incident-action endpoints (`acknowledge`/`resolve`) require the JWT server-side
-today — read endpoints stay open, matching the demo's read-heavy dashboard use.
+request interceptor; a 401 response anywhere logs the session out.
+
+**Every endpoint requires authentication** (spec §10.1): read endpoints
+(KPI/SLA/alerts/report) accept any logged-in user's JWT, the ingest webhook
+uses the static `NOC_API_KEY`, and roles gate the write actions:
+
+| Role | Read dashboards | Acknowledge | Resolve |
+|---|---|---|---|
+| `admin` | ✅ | ✅ | ✅ |
+| `noc_agent` | ✅ | ✅ | ✅ |
+| `analyst` | ✅ | ❌ (403) | ❌ (403) |
+
+The frontend mirrors this: analysts don't see the acknowledge button in the
+alert feed. Enforcement lives in `require_role()`
+(`backend/app/core/security.py`). `/api/report/monthly` additionally accepts
+the static API key so the scheduled ETL export can pull it without a user
+session. Endpoints are also rate-limited per IP (100/min reads, 10/min ingest
+— HTTP 429 beyond that).
 
 ---
 
@@ -498,11 +553,13 @@ Once the backend is running, interactive API documentation is available at:
 - **Swagger UI**: [http://localhost:8000/docs](http://localhost:8000/docs)
 - **ReDoc**: [http://localhost:8000/redoc](http://localhost:8000/redoc)
 
-Key endpoints (all read endpoints take `month`/`year` query params):
+Key endpoints (all read endpoints take `month`/`year` query params and
+require a JWT; see [Authentication](#authentication) for roles and rate limits):
 
 | Method | Endpoint | Description |
 |---|---|---|
 | GET | `/api/kpi/summary` | Monthly KPI summary + delta vs. previous month |
+| GET | `/api/kpi/compare` | Current month vs N-1 and N-3 months, with per-KPI deltas |
 | GET | `/api/kpi/localities` | Top localities by incident count |
 | GET | `/api/kpi/nodes` | Top nodes (optionally filtered by `locality_id`) |
 | GET | `/api/kpi/recurrent` | Nodes with ≥ `min_count` incidents |
@@ -514,12 +571,20 @@ Key endpoints (all read endpoints take `month`/`year` query params):
 | GET | `/api/locality/{id}/nodes` | Node detail for one locality |
 | GET | `/api/kpi/localities/map` | Every locality with coordinates + KPIs, for the map |
 | POST | `/api/incidents/ingest` | Webhook ingestion (requires `Authorization: Bearer $NOC_API_KEY`) |
-| PATCH | `/api/incidents/{id}/acknowledge` | Mark an incident acknowledged (requires login) |
-| PATCH | `/api/incidents/{id}/resolve` | Resolve an incident (requires login) |
-| GET | `/api/report/monthly` | Monthly report, `format=json` or `format=pdf` |
+| PATCH | `/api/incidents/{id}/acknowledge` | Mark acknowledged (roles: `admin`, `noc_agent`) |
+| PATCH | `/api/incidents/{id}/resolve` | Resolve an incident (roles: `admin`, `noc_agent`) |
+| GET | `/api/report/monthly` | Monthly report, `format=json`, `pdf` or `docx` (JWT **or** API key) |
 | POST | `/api/auth/login` | Username/password login → JWT |
 | POST | `/api/auth/pin-login` | 4-digit PIN quick login → JWT |
 | GET | `/api/auth/me` | Current user (session restore) |
+| WS | `/ws/alerts?token=<JWT>` | Real-time incident stream (Redis pub/sub behind the scenes) |
+
+New incidents are also **pushed live** to the dashboard: ingest publishes to
+Redis, `/ws/alerts` forwards to every connected browser, and the frontend
+(`useRealtime.js`) refreshes its alert/KPI queries on each message — with 15s
+polling kept as a fallback. Critical-severity incidents additionally trigger
+SMS + email to the NOC (see `backend/app/services/notification_service.py`),
+when `NOTIFICATIONS_ENABLED=true`.
 
 ---
 
@@ -536,7 +601,25 @@ The database ships with a generated demo dataset so the dashboard is fully inter
   docker compose up -d
   ```
 - The **`etl` service** keeps the dashboard feeling live: it simulates a supervision-tool alert on a random active node every 20–60s and posts it to `/api/incidents/ingest`, approximating the always-on Zabbix/Nagios/Centreon → webhook flow from the cahier des charges (§2.2, §7.1). Its collectors (`etl/extract/simulators.py`) are stand-ins — swap them for real HTTP calls once real supervision tools are reachable.
+- The same Celery beat also runs two **scheduled jobs** (cahier des charges §2.2 and §1.2):
+  - `etl.refresh_kpi_view` — nightly at **02:00**, `REFRESH MATERIALIZED VIEW CONCURRENTLY mv_kpi_node_monthly`.
+  - `etl.generate_monthly_report` — on the **1st of each month at 02:30**, downloads the previous month's report (PDF + DOCX) and archives it in the `reports` Docker volume (`/reports` inside `etl-worker`).
 - iTop ticket creation is similarly stubbed (`backend/app/services/itop_service.py`): it mints a `TKT-<year>-<id>` reference in the same shape the real iTop REST webservice would return.
+
+---
+
+## Further Documentation
+
+This README covers setup and a high-level tour. For deeper technical
+reference, see [`docs/`](docs/):
+
+| Document | Covers |
+|---|---|
+| [docs/architecture.md](docs/architecture.md) | System diagram, request/data flow, caching strategy, design system internals |
+| [docs/api-reference.md](docs/api-reference.md) | Every endpoint: auth, params, request/response shapes, error codes |
+| [docs/database-schema.md](docs/database-schema.md) | Tables, columns, relationships, the `mv_kpi_node_monthly` materialized view, indexes |
+| [docs/deployment.md](docs/deployment.md) | Services, env vars, `deployment.sh`, TLS, backups, production hardening checklist |
+| [docs/integrations.md](docs/integrations.md) | Zabbix/Nagios/Centreon/NetXMS/iTop integration contracts and what to swap for real ones |
 
 ---
 
@@ -552,8 +635,10 @@ The database ships with a generated demo dataset so the dashboard is fully inter
    # Frontend linting
    cd frontend && npm run lint
 
-   # Backend: ensure no broken imports
-   cd backend && python -m py_compile app/main.py
+   # Backend: run the test suite (40+ tests — auth, RBAC, rate limiting, ingest flow, reports)
+   cd backend
+   pip install -r requirements-dev.txt
+   pytest
    ```
 
 3. **Commit** with a clear message:

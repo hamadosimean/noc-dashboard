@@ -4,6 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.core.constants import SYNC_MV_REFRESH
 from app.models.dimension import Cause, Node
 from app.models.incident import Incident
 from app.schemas.incidents import IncidentIngestPayload
@@ -44,8 +45,11 @@ def get_or_create_cause(
 
 
 def refresh_kpi_view(db: Session) -> None:
-    # Nightly batch per spec §2.2 refreshes the view; refreshing synchronously on
-    # every write keeps this demo interactive (dataset is small enough for it to be cheap).
+    # The spec's nightly 02:00 refresh runs in the ETL beat container
+    # (etl.refresh_kpi_view); this synchronous refresh-on-write keeps small demo
+    # datasets interactive and is disabled in production via SYNC_MV_REFRESH=false.
+    if not SYNC_MV_REFRESH:
+        return
     db.execute(text("REFRESH MATERIALIZED VIEW mv_kpi_node_monthly"))
     db.commit()
 

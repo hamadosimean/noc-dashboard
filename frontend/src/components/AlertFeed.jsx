@@ -2,6 +2,7 @@ import React from "react";
 import { Bell, Check } from "lucide-react";
 import Card from "./Card";
 import { useAcknowledgeIncident, useOpenAlerts } from "../hooks/useRealtime";
+import { useAuthStore } from "../store/auth";
 import { SEVERITY_COLOR } from "../theme/colors";
 
 const formatAge = (minutes) => {
@@ -13,6 +14,10 @@ const formatAge = (minutes) => {
 const AlertFeed = () => {
   const { data: alerts = [], isLoading } = useOpenAlerts(20);
   const acknowledge = useAcknowledgeIncident();
+  const role = useAuthStore((state) => state.user?.role);
+  // Spec §10.1 — analysts are read-only; the backend enforces this with a 403,
+  // so don't show them an action that can only fail.
+  const canAcknowledge = role === "admin" || role === "noc_agent";
 
   return (
     <Card
@@ -75,7 +80,7 @@ const AlertFeed = () => {
                   {alert.locality} — {formatAge(alert.age_minutes)}
                 </p>
               </div>
-              {alert.status === "open" && (
+              {canAcknowledge && alert.status === "open" && (
                 <button
                   onClick={() => acknowledge.mutate(alert.id)}
                   disabled={acknowledge.isPending}

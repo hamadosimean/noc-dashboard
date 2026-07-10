@@ -5,6 +5,7 @@ import KPICard from "../components/KPICard";
 import Card from "../components/Card";
 import WeeklyBar from "../components/charts/WeeklyBar";
 import MTTRDonut from "../components/charts/MTTRDonut";
+import PeriodComparison from "../components/PeriodComparison";
 import BurkinaFasoMap from "../components/map/BurkinaFasoMap";
 import LocalityBulletList from "../components/map/LocalityBulletList";
 import {
@@ -52,7 +53,7 @@ const GlobalView = () => {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <KPICard
           title="Total Incidents"
           value={kpi?.total_incidents}
@@ -146,6 +147,8 @@ const GlobalView = () => {
           </div>
         </Card>
       </div>
+
+      <PeriodComparison />
     </div>
   );
 };

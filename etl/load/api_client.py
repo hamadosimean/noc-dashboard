@@ -31,3 +31,17 @@ class NocApiClient:
         except requests.RequestException as exc:
             logger.warning("Ingest failed for %s: %s", payload.get("node_code"), exc)
             return None
+
+    def download_monthly_report(self, month: int, year: int, format: str = "pdf") -> bytes | None:
+        try:
+            r = requests.get(
+                f"{self.base_url}/api/report/monthly",
+                params={"month": month, "year": year, "format": format},
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                timeout=max(self.timeout, 30),
+            )
+            r.raise_for_status()
+            return r.content
+        except requests.RequestException as exc:
+            logger.warning("Report download failed for %s-%s: %s", year, month, exc)
+            return None

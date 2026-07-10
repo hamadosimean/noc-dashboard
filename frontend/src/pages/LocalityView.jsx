@@ -58,8 +58,8 @@ const LocalityView = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
-        <Card title="Sélection" className="lg:col-span-2">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-5">
+        <Card title="Sélection" className="md:col-span-2 lg:col-span-2">
           {localitiesLoading ? (
             <div
               className="flex h-64 items-center justify-center text-sm"
@@ -90,14 +90,14 @@ const LocalityView = () => {
           )}
         </Card>
 
-        <div className="lg:col-span-1">
+        <div className="md:col-span-1 lg:col-span-1">
           <NodeList
             nodes={localityDetail?.nodes ?? []}
             loading={nodesLoading}
           />
         </div>
 
-        <div className="lg:col-span-2">
+        <div className="md:col-span-1 lg:col-span-2">
           <IncidentTable
             title={`Alertes ouvertes — ${selectedLocalityName ?? ""}`}
             incidents={localityIncidents}
