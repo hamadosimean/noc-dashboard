@@ -20,20 +20,23 @@ app.conf.update(
     task_acks_late=True,
     worker_prefetch_multiplier=1,
     broker_connection_retry_on_startup=True,
-    # Drop a collection tick instead of piling them up if the API is down.
-    task_time_limit=60,
+    # Bound one collection pass (4 tools × login+fetch+ingest) and drop a tick
+    # instead of piling them up if a supervision API or the backend is down.
+    task_time_limit=240,
     beat_schedule={
+        # batch poll of the configured supervision-tool APIs
+        # (Zabbix/Nagios/NetXMS/Centreon) every 5 minutes by default.
         "collect-supervision-events": {
-            "task": "etl.collect_incident",
+            "task": "etl.collect_supervision",
             "schedule": float(COLLECT_INTERVAL_S),
             "options": {"expires": COLLECT_INTERVAL_S},
         },
-        # Spec §2.2 — nightly recompute of the monthly KPI materialized view.
+        # nightly recompute of the monthly KPI materialized view.
         "refresh-kpi-view-nightly": {
             "task": "etl.refresh_kpi_view",
             "schedule": crontab(hour=2, minute=0),
         },
-        # Spec §1.2 (P1) — automatic end-of-month report, archived after the refresh.
+        # automatic end-of-month report, archived after the refresh.
         "generate-monthly-report": {
             "task": "etl.generate_monthly_report",
             "schedule": crontab(day_of_month=1, hour=2, minute=30),

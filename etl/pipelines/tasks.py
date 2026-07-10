@@ -1,13 +1,21 @@
 import logging
 import os
-import random
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import psycopg2
+import redis
 
 from celery_app import app
-from config import NOC_API_KEY, NOC_API_URL, REPORTS_DIR, build_dsn
-from extract.simulators import simulate_event
+from config import (
+    COLLECT_INTERVAL_S,
+    NOC_API_KEY,
+    NOC_API_URL,
+    REDIS_HOST,
+    REDIS_PORT,
+    REPORTS_DIR,
+    build_dsn,
+)
+from extract import enabled_collectors
 from load.api_client import NocApiClient
 from pipelines.collector import load_active_nodes
 from transform.normalize import to_ingest_payload
@@ -16,46 +24,81 @@ logger = logging.getLogger(__name__)
 
 api_client = NocApiClient(base_url=NOC_API_URL, api_key=NOC_API_KEY)
 
-
-@app.task(
-    name="etl.collect_incident",
-    bind=True,
-    max_retries=3,
-    default_retry_delay=10,
+# Poll-state (last successful collection per tool) lives in Redis so restarts
+# don't re-fetch the whole event history.
+state_redis = redis.Redis(
+    host=REDIS_HOST, port=REDIS_PORT, decode_responses=True, socket_connect_timeout=2
 )
-def collect_incident(self):
+STATE_KEY = "etl:last_poll:{tool}"
+
+
+def _last_poll(tool: str) -> datetime:
+    try:
+        raw = state_redis.get(STATE_KEY.format(tool=tool))
+        if raw:
+            return datetime.fromisoformat(raw)
+    except redis.RedisError as exc:
+        logger.warning("Poll-state read failed for %s: %s", tool, exc)
+    # First run (or Redis unavailable): look back two intervals, not all history.
+    return datetime.now(timezone.utc) - timedelta(seconds=COLLECT_INTERVAL_S * 2)
+
+
+def _set_last_poll(tool: str, at: datetime) -> None:
+    try:
+        state_redis.set(STATE_KEY.format(tool=tool), at.isoformat())
+    except redis.RedisError as exc:
+        logger.warning("Poll-state write failed for %s: %s", tool, exc)
+
+
+@app.task(name="etl.collect_supervision", bind=True, max_retries=0)
+def collect_supervision(self):
     """
-    One collection tick: simulates one supervision-tool alert on a random active
-    node and posts it to /api/incidents/ingest — approximating the always-on
-    Zabbix/Nagios/Centreon -> webhook flow described in the cahier des charges
-    Scheduled by Celery Beat (see celery_app.py).
+    One batch collection pass (every 5 minutes):
+    poll every *configured* supervision tool for new/active problems, map each
+    onto a dim_node, and POST them to /api/incidents/ingest. The backend
+    deduplicates on (source_tool, external_id), so re-reporting a still-open
+    problem is a no-op.
+
+    A tool is configured when its *_API_URL env var is set (see etl/config.py);
+    tools without an endpoint are skipped. Failures are isolated per tool — one
+    unreachable supervision system never blocks collection from the others.
     """
-    nodes = load_active_nodes(build_dsn())
-    if not nodes:
-        logger.warning("No active nodes found, skipping this tick")
-        return None
+    collectors = enabled_collectors()
+    if not collectors:
+        logger.info(
+            "No supervision tool configured (set ZABBIX_API_URL / NAGIOS_API_URL / "
+            "NETXMS_API_URL / CENTREON_API_URL) — nothing to collect"
+        )
+        return {"configured": 0}
 
-    node_code, source_tool = random.choice(nodes)
-    event = simulate_event(node_code, source_tool)
-    payload = to_ingest_payload(event)
+    all_nodes = load_active_nodes(build_dsn())
+    stats = {}
+    for tool, fetch_events in collectors.items():
+        nodes = [n for n in all_nodes if n["source_tool"] == tool]
+        started_at = datetime.now(timezone.utc)
+        try:
+            events = fetch_events(nodes, since=_last_poll(tool))
+        except Exception as exc:
+            logger.error("[%s] collection failed: %s", tool, exc)
+            stats[tool] = {"error": str(exc)}
+            continue
 
-    result = api_client.ingest_incident(payload)
-    if result is None:
-        raise self.retry(exc=RuntimeError(f"Ingest failed for {node_code}"))
+        ingested = 0
+        for event in events:
+            result = api_client.ingest_incident(to_ingest_payload(event))
+            if result is not None:
+                ingested += 1
+        _set_last_poll(tool, started_at)
+        stats[tool] = {"fetched": len(events), "ingested": ingested}
+        logger.info("[%s] fetched=%d ingested=%d", tool, len(events), ingested)
 
-    logger.info(
-        "Ingested incident #%s on %s (ticket=%s)",
-        result.get("incident_id"),
-        node_code,
-        result.get("itop_ticket_id"),
-    )
-    return result
+    return stats
 
 
 @app.task(name="etl.refresh_kpi_view", bind=True, max_retries=2, default_retry_delay=60)
 def refresh_kpi_view(self):
     """
-    Nightly 02:00 batch (spec §2.2): recompute the monthly KPI materialized view.
+    Nightly 02:00 batch: recompute the monthly KPI materialized view.
     CONCURRENTLY so dashboard reads are never blocked (the view has the unique
     index on (month, node_id) that CONCURRENTLY requires).
     """
@@ -70,7 +113,12 @@ def refresh_kpi_view(self):
         raise self.retry(exc=exc)
 
 
-@app.task(name="etl.generate_monthly_report", bind=True, max_retries=3, default_retry_delay=300)
+@app.task(
+    name="etl.generate_monthly_report",
+    bind=True,
+    max_retries=3,
+    default_retry_delay=300,
+)
 def generate_monthly_report(self):
     """
     End-of-month automatic export (spec §1.2 « Rapport mensuel », P1).

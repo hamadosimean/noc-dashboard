@@ -1,4 +1,4 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Response, status
 from sqlalchemy.orm import Session
 
 from app.core.rate_limit import ingest_rate_limit
@@ -25,11 +25,25 @@ router = APIRouter(prefix="/api/incidents", tags=["incidents"])
 def ingest_incident(
     payload: IncidentIngestPayload,
     background_tasks: BackgroundTasks,
+    response: Response,
     db: Session = Depends(get_db),
     _: None = Depends(verify_api_key),
     __: None = Depends(ingest_rate_limit),
 ):
-    incident = incident_service.ingest_incident(db, payload)
+    incident, created = incident_service.ingest_incident(db, payload)
+
+    if not created:
+        # Re-reported still-open alert (batch pollers resend active problems):
+        # idempotent no-op, no broadcast/notification, 200 instead of 201.
+        response.status_code = status.HTTP_200_OK
+        return IncidentIngestResponse(
+            incident_id=incident.id,
+            node_id=incident.node_id,
+            itop_ticket_id=incident.itop_ticket_id,
+            shift=incident.shift,
+            created_at=incident.created_at,
+        )
+
     cache_service.invalidate_prefix("kpi:")
 
     node = incident_service.get_node_by_code(db, payload.node_code)

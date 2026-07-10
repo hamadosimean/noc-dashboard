@@ -63,9 +63,13 @@ full template). Grouped by concern:
 bearer key for `/api/incidents/ingest` webhooks), `CORS_ORIGINS`
 (comma-separated allow-list)
 
-**Supervision tool integrations** (see [integrations.md](integrations.md))
-`ZABBIX_API_URL/USER/PASSWORD`, `CENTREON_API_URL/API_KEY`,
-`NAGIOS_API_URL/API_KEY`, `ITOP_URL/USER/PASS`
+**Supervision tool collectors** (a collector is enabled iff its `*_API_URL`
+is set — see [integrations.md](integrations.md))
+`ZABBIX_API_URL` + `ZABBIX_USER`/`ZABBIX_PASSWORD` or `ZABBIX_API_TOKEN`,
+`NAGIOS_API_URL` + `NAGIOS_USER`/`NAGIOS_PASSWORD` and/or `NAGIOS_API_KEY`,
+`NETXMS_API_URL` + `NETXMS_USER`/`NETXMS_PASSWORD`,
+`CENTREON_API_URL` + `CENTREON_USER`/`CENTREON_PASSWORD` or `CENTREON_API_KEY`,
+`ITOP_URL/USER/PASS` (backend-side iTop stub)
 
 **Notifications** (SMS + email on critical incidents — see
 [architecture.md#notifications-smsemail](architecture.md#notifications-smsemail))
@@ -87,7 +91,7 @@ write — demo behavior; set `false` in production and rely on the nightly
 **ETL / Celery**
 `CELERY_BROKER_DB` (Redis logical DB for the broker, default 1 — separate from
 the backend's cache on DB 0), `ETL_COLLECT_INTERVAL_S` (seconds between
-simulated events, default 30), `REPORTS_DIR` (where the monthly report job
+supervision-API polls, default 300 — spec §2.2), `REPORTS_DIR` (where the monthly report job
 writes, default `/reports`)
 
 **Global**
@@ -119,8 +123,8 @@ This is a **full stop/rebuild/restart** — it briefly takes the whole stack
 images rebuild. It does **not**:
 - Pull new source (run `git pull` first if deploying a new commit).
 - Preserve in-flight Celery tasks (`etl-worker`/`etl-beat` restart cleanly, but
-  any task mid-flight during `down` is lost — acceptable for this ETL, which
-  only simulates periodic events).
+  any task mid-flight during `down` is lost — acceptable: the next collection
+  pass re-fetches from each tool's last-poll timestamp).
 - Touch the `pgdata` volume — database contents persist across runs.
 
 For a zero-downtime rolling update, rebuild and restart one service at a time
@@ -210,8 +214,8 @@ Before pointing this at real traffic / real supervision tools:
 - [ ] Replace `SECRET_KEY` and `NOC_API_KEY` with strong, unique values.
 - [ ] Replace the self-signed TLS cert with a CA-issued one (see above).
 - [ ] Set real `ZABBIX_*` / `CENTREON_*` / `NAGIOS_*` / `ITOP_*` credentials
-      and swap the ETL simulators / iTop stub for real integrations (see
-      [integrations.md](integrations.md)).
+      so the collectors poll the real supervision APIs, and swap the iTop stub
+      for the real REST call (see [integrations.md](integrations.md)).
 - [ ] Set `SYNC_MV_REFRESH=false` so the nightly 02:00 `etl.refresh_kpi_view`
       job owns the materialized-view refresh (per-write refresh gets expensive
       at production incident volume).

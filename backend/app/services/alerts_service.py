@@ -1,32 +1,44 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import text
+from sqlalchemy import select
 from sqlalchemy.orm import Session
+
+from app.models.dimension import Locality, Node
+from app.models.incident import Incident
 
 
 def get_open_alerts(db: Session, limit: int = 20) -> list[dict]:
-    rows = db.execute(
-        text(
-            """
-            SELECT
-              i.id, n.code AS node_code, n.name AS node_name, l.name AS locality,
-              i.severity, i.status, i.description, i.detected_at
-            FROM fact_incident i
-            JOIN dim_node n ON i.node_id = n.id
-            JOIN dim_locality l ON n.locality_id = l.id
-            WHERE i.status IN ('open', 'acknowledged')
-            ORDER BY i.detected_at ASC
-            LIMIT :limit
-            """
-        ),
-        {"limit": limit},
-    ).mappings().all()
+    rows = (
+        db.execute(
+            select(
+                Incident.id,
+                Node.code.label("node_code"),
+                Node.name.label("node_name"),
+                Locality.name.label("locality"),
+                Incident.severity,
+                Incident.status,
+                Incident.description,
+                Incident.detected_at,
+            )
+            .join(Node, Incident.node_id == Node.id)
+            .join(Locality, Node.locality_id == Locality.id)
+            .where(Incident.status.in_(("open", "acknowledged")))
+            .order_by(Incident.detected_at.asc())
+            .limit(limit)
+        )
+        .mappings()
+        .all()
+    )
 
     now = datetime.now(timezone.utc)
     result = []
     for r in rows:
         detected_at = r["detected_at"]
-        detected_at_aware = detected_at.replace(tzinfo=timezone.utc) if detected_at.tzinfo is None else detected_at
+        detected_at_aware = (
+            detected_at.replace(tzinfo=timezone.utc)
+            if detected_at.tzinfo is None
+            else detected_at
+        )
         age_minutes = int((now - detected_at_aware).total_seconds() // 60)
         result.append(
             {

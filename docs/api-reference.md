@@ -30,7 +30,7 @@ Two independent auth schemes are used, depending on the caller:
 
 | Scheme | Header | Used by | Endpoints |
 |---|---|---|---|
-| **Static API key** | `Authorization: Bearer $NOC_API_KEY` | Supervision tools / the ETL simulator | `POST /api/incidents/ingest`; also accepted (alternative to a JWT) on `GET /api/report/monthly` for the scheduled ETL export |
+| **Static API key** | `Authorization: Bearer $NOC_API_KEY` | Supervision-tool webhooks / the ETL collectors | `POST /api/incidents/ingest`; also accepted (alternative to a JWT) on `GET /api/report/monthly` for the scheduled ETL export |
 | **JWT bearer** | `Authorization: Bearer <access_token>` | The dashboard frontend, after login | Every `GET` KPI/SLA/alerts/locality/report endpoint, `PATCH /api/incidents/{id}/acknowledge`, `PATCH /api/incidents/{id}/resolve`, `GET /api/auth/me`, and the `/ws/alerts` WebSocket (token as query param) |
 
 - JWTs are issued by `POST /api/auth/login` or `POST /api/auth/pin-login`, signed
@@ -266,7 +266,7 @@ detected_at, age_minutes}[]`.
 
 ### `POST /api/incidents/ingest`
 
-Webhook entry point for supervision tools (and the ETL simulator). Requires
+Webhook entry point for supervision tools (and the ETL collectors). Requires
 the static API key header.
 
 **Auth**: `Authorization: Bearer $NOC_API_KEY`

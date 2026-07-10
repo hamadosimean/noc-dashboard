@@ -1,150 +1,149 @@
 # Integrations
 
-How the dashboard connects to external supervision/ITSM tools today, and what
-"today" actually means: **every integration in this repository is currently
-simulated or stubbed** — there is no live Zabbix/Nagios/Centreon/NetXMS/iTop
-instance behind this demo. This document is both the integration contract
-(what the real thing must satisfy) and a map of exactly what to swap when a
-real instance becomes reachable.
+How the dashboard connects to external supervision/ITSM tools. The ETL runs
+**real collectors**: each supervision tool is polled through its actual API as
+soon as its endpoint is configured — no simulation. A collector is enabled iff
+its `*_API_URL` environment variable is set; leave it empty to disable that
+tool. To integrate a tool, set its URL + credentials in `.env` and restart
+`etl-worker`.
 
 ## Table of Contents
 
 - [Summary](#summary)
-- [Supervision tools → incident ingestion](#supervision-tools--incident-ingestion)
-- [The ETL pipeline (simulator)](#the-etl-pipeline-simulator)
+- [How collection works](#how-collection-works)
+- [Per-tool configuration](#per-tool-configuration)
+- [Host → node matching](#host--node-matching)
+- [Deduplication](#deduplication)
+- [Centreon webhooks (push)](#centreon-webhooks-push)
 - [iTop (ITSM / CMDB)](#itop-itsm--cmdb)
 - [Webhook authentication](#webhook-authentication)
-- [Swapping a simulator for the real thing](#swapping-a-simulator-for-the-real-thing)
 
 ---
 
 ## Summary
 
-| System | Protocol (real) | Status in this repo | Config vars |
+| System | Protocol | Status | Config vars |
 |---|---|---|---|
-| **Zabbix** | JSON-RPC `event.get` | Simulated (`etl/extract/simulators.py`) | `ZABBIX_API_URL`, `ZABBIX_USER`, `ZABBIX_PASSWORD` |
-| **Nagios** | `statusjson.cgi` | Simulated | `NAGIOS_API_URL`, `NAGIOS_API_KEY` |
-| **NetXMS** | REST API | Simulated | — (no dedicated env vars yet) |
-| **Centreon** | Broker webhook / REST | Simulated | `CENTREON_API_URL`, `CENTREON_API_KEY` |
+| **Zabbix** | JSON-RPC `event.get` (§6.1) | **Implemented** (`etl/extract/zabbix.py`) | `ZABBIX_API_URL`, `ZABBIX_USER`/`ZABBIX_PASSWORD` or `ZABBIX_API_TOKEN` |
+| **Nagios** | `statusjson.cgi?query=hostlist` (§6.2) | **Implemented** (`etl/extract/nagios.py`) | `NAGIOS_API_URL`, `NAGIOS_USER`/`NAGIOS_PASSWORD` and/or `NAGIOS_API_KEY` |
+| **NetXMS** | REST `/alarms` (web API daemon) | **Implemented** (`etl/extract/netxms.py`) | `NETXMS_API_URL`, `NETXMS_USER`, `NETXMS_PASSWORD` |
+| **Centreon** | REST v2 `/monitoring/resources` (§6.3) + inbound webhook | **Implemented** (`etl/extract/centreon.py`) | `CENTREON_API_URL`, `CENTREON_USER`/`CENTREON_PASSWORD` or `CENTREON_API_KEY` |
 | **iTop** | REST webservice (`core/create`) | Stubbed (`backend/app/services/itop_service.py`) | `ITOP_URL`, `ITOP_USER`, `ITOP_PASS` |
-| **Twilio (SMS)** | REST API (`Messages.json`) | **Implemented** (`backend/app/services/notification_service.py`) — disabled until configured | `NOTIFICATIONS_ENABLED`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`, `NOC_SMS_RECIPIENTS` |
-| **SMTP (email)** | SMTP + STARTTLS | **Implemented** (same service) — disabled until configured | `SMTP_HOST/PORT/USER/PASSWORD/FROM`, `SMTP_USE_TLS`, `NOC_EMAIL_RECIPIENTS` |
+| **Twilio (SMS)** | REST API (`Messages.json`) | **Implemented** (`backend/app/services/notification_service.py`) | `NOTIFICATIONS_ENABLED`, `TWILIO_*`, `NOC_SMS_RECIPIENTS` |
+| **SMTP (email)** | SMTP + STARTTLS | **Implemented** (same service) | `SMTP_*`, `NOC_EMAIL_RECIPIENTS` |
 
-The supervision-tool `*_API_URL`/`*_API_KEY`/`*_USER`/`*_PASSWORD` variables
-are already wired into `.env`/`.env.example` and `docker-compose.yml`'s
-`backend` environment block, but nothing in the codebase reads them yet —
-they're placeholders for the real integration work described below. The
-**notification** variables, by contrast, are live: real HTTP/SMTP calls exist
-and fire on critical-incident ingest as soon as `NOTIFICATIONS_ENABLED=true`
-(see [architecture.md#notifications-smsemail](architecture.md#notifications-smsemail)).
+## How collection works
 
-## Supervision tools → incident ingestion
+`etl-beat` schedules `etl.collect_supervision` every `ETL_COLLECT_INTERVAL_S`
+seconds (default **300** — the spec's §2.2 five-minute batch). Each pass:
 
-In production, each supervision tool would push (webhook) or be polled for
-new alerts, which get normalized and POSTed to
-`POST /api/incidents/ingest` (see [api-reference.md](api-reference.md#post-apiincidentsingest)).
-`dim_node.source_tool` records which tool owns each node, and
-`fact_incident.source_tool` denormalizes it onto every incident.
+1. Loads all active nodes (code, name, IP, source_tool) from Postgres.
+2. For each **configured** tool, calls its `fetch_events(nodes, since)`
+   collector. `since` is the tool's last successful poll, tracked in Redis
+   (`etl:last_poll:{tool}`) so a worker restart doesn't re-fetch history
+   (first run looks back two intervals).
+3. Normalizes each event (`transform/normalize.py`) and POSTs it to
+   `POST /api/incidents/ingest` with the static `NOC_API_KEY`.
+4. Failures are **isolated per tool** — an unreachable Zabbix never blocks
+   Nagios collection. Each pass logs `[tool] fetched=N ingested=M` and returns
+   a per-tool stats dict (visible in `docker compose logs etl-worker`).
 
-Per the cahier des charges:
-- **§6.1 Zabbix** — poll `event.get` via JSON-RPC at `ZABBIX_API_URL`.
-- **§6.2 Nagios** — poll `GET .../statusjson.cgi?query=hostlist`.
-- **§6.3 Centreon** — receive broker webhook payloads.
-- **NetXMS** — its own REST event query (no section reference in code comments).
+If **no** tool is configured, the task logs "nothing to collect" and exits —
+the dashboard then only shows seeded/historical data and whatever arrives by
+webhook.
 
-None of these calls exist yet in `backend/` or `etl/` — see
-[Swapping a simulator for the real thing](#swapping-a-simulator-for-the-real-thing).
+## Per-tool configuration
 
-## The ETL pipeline (simulator)
+**Zabbix** — set `ZABBIX_API_URL` to the JSON-RPC endpoint
+(e.g. `https://zabbix.anptic.bf/api_jsonrpc.php`). Auth: either
+`ZABBIX_API_TOKEN` (Zabbix ≥ 5.4, preferred) or `ZABBIX_USER`/`ZABBIX_PASSWORD`
+(`user.login` is called on every poll — its token is only valid ~30 min, so it
+is not cached). Fetches trigger PROBLEM events (`event.get`, `value=1`) since
+the last poll, with `selectHosts` for node matching. Severity map: Zabbix 0–5 →
+`low, low, medium, medium, high, critical`.
 
-`etl/` is a Celery-based service (see [architecture.md](architecture.md#components))
-that stands in for the four supervision tools until they're reachable:
+**Nagios** — set `NAGIOS_API_URL` to the base URL that fronts the CGIs
+(e.g. `https://nagios.anptic.bf/nagios`; the collector appends
+`/cgi-bin/statusjson.cgi`). Auth: Basic (`NAGIOS_USER`/`NAGIOS_PASSWORD`)
+and/or `NAGIOS_API_KEY` sent as `X-Auth-Token` (spec §6.2). Polls **current
+host status**: state `4` (DOWN) → `critical`, `8` (UNREACHABLE) → `high`.
+Because status (not an event log) is polled, a host that stays down is
+re-reported each pass with the stable id `nagios-{host}-down` — deduplicated
+by the backend.
 
-1. **`etl-beat`** enqueues `etl.collect_incident` every `ETL_COLLECT_INTERVAL_S`
-   seconds (default 30).
-2. **`etl-worker`** runs the task:
-   - `pipelines/collector.py::load_active_nodes` — reads every `is_active =
-     TRUE` node directly from Postgres (bypassing the API — this is the one
-     place the ETL talks to the DB instead of the backend).
-   - `extract/simulators.py::simulate_event` — picks the per-tool simulator
-     (`poll_zabbix`/`poll_nagios`/`poll_netxms`/`poll_centreon`) matching the
-     node's `source_tool`, and fabricates one plausible event: a random
-     severity (weighted toward medium/high) and a cause drawn from a
-     per-tool table (e.g. Zabbix skews toward power/énergie causes, Centreon
-     toward link/VSAT causes).
-   - `transform/normalize.py::to_ingest_payload` — reshapes the raw event into
-     the ingest payload, and decides `itop_auto_ticket=True` for
-     `critical`/`high` severity (the only place that decision is made).
-   - `load/api_client.py::NocApiClient.ingest_incident` — POSTs to
-     `$NOC_API_URL/api/incidents/ingest` with the static bearer key, 5s
-     timeout, and returns `None` (rather than raising) on any request
-     exception.
-3. On a `None` result, the Celery task retries up to 3 times with a 10s delay
-   (`etl/pipelines/tasks.py`); Celery drops a tick entirely rather than piling
-   up backlog if the API is down (`task_time_limit=60`, `expires` on the beat
-   schedule).
+**NetXMS** — set `NETXMS_API_URL` to the web API daemon base
+(e.g. `https://netxms.anptic.bf/rest`; the collector calls `/alarms` with
+Basic auth). Active alarms map severity 0–4 (NORMAL…CRITICAL) →
+`low, medium, medium, high, critical`; NORMAL alarms are ignored. Alarm ids
+are stable → deduplicated while active.
 
-This whole pipeline exists purely to make the dashboard feel alive without
-requiring real infrastructure — it approximates the "always-on webhook flow"
-from cahier des charges §2.2/§7.1.
+**Centreon** — set `CENTREON_API_URL` to the v2 API base
+(e.g. `https://centreon.anptic.bf/centreon/api/latest`). Auth: static
+`CENTREON_API_KEY` (sent as `X-AUTH-TOKEN`) or `CENTREON_USER`/`CENTREON_PASSWORD`
+(a `/login` call per poll). Fetches unhandled `CRITICAL`/`UNKNOWN`/`DOWN`
+resources (§6.3's `status IN (2,3)` filter). For service resources the
+**parent host** name is used for node matching.
+
+## Host → node matching
+
+Collectors map each tool's host reference onto a `dim_node` **code** (what
+`/ingest` requires), trying in order (`etl/extract/common.py`):
+
+1. exact node `code` (e.g. the Zabbix host is literally named `DED-001`),
+2. exact node `name` (case-insensitive, e.g. `DREP Dédougou`),
+3. exact `ip_address`.
+
+Unmatched hosts are logged as a warning and skipped — align the supervision
+tool's host names with the CMDB (or fill in `dim_node.ip_address`) to make
+them flow. Each tool only sees the nodes whose `dim_node.source_tool` matches
+it, so the same host name in two tools can't cross-match.
+
+## Deduplication
+
+`POST /api/incidents/ingest` is **idempotent** on
+`(source_tool, external_id)`: if an incident with the same pair is still
+`open`/`acknowledged`, the backend returns it (HTTP `200`, no new row, no
+WebSocket broadcast, no SMS/email) instead of creating a duplicate — required
+because status-based pollers (Nagios, NetXMS, Centreon) legitimately re-report
+active problems every pass. A `resolved`/`closed` incident does **not** match:
+the same alert firing again after recovery is a new incident.
+
+## Centreon webhooks (push)
+
+Independently of the 5-minute batch, Centreon (or any tool) can push alerts in
+real time by POSTing directly to `/api/incidents/ingest` with
+`Authorization: Bearer $NOC_API_KEY` — see the payload contract in
+[api-reference.md](api-reference.md#post-apiincidentsingest) and the broker
+configuration example in the cahier des charges §6.3. Webhook-pushed and
+batch-collected alerts coexist safely thanks to the deduplication above.
 
 ## iTop (ITSM / CMDB)
 
-`backend/app/services/itop_service.py` is a stub:
-
-```python
-def create_ticket(incident_id: int, node_code: str, description: str | None) -> str:
-    year = datetime.now(timezone.utc).year
-    return f"TKT-{year}-{incident_id:05d}"
-```
-
-It deterministically mints a reference in exactly the shape the real iTop
-REST webservice (`core/create` on class `Incident`) would return, so the rest
-of the app (ingestion response, dashboard display) already exercises the real
-data shape — only the network call is missing. It's invoked from
-`incident_service.ingest_incident` whenever a payload sets
-`itop_auto_ticket: true` (which the ETL simulator sets for `critical`/`high`
-severity events; real supervision webhooks would set it the same way, or the
-backend could decide based on severity server-side instead).
+`backend/app/services/itop_service.py` is still a stub: it deterministically
+mints a `TKT-{year}-{id}` reference in exactly the shape the real iTop REST
+webservice (`core/create` on class `Incident`) would return, so the rest of
+the app already exercises the real data shape — only the network call is
+missing. Swap the stub for a `requests.post(ITOP_URL, ...)` using
+`ITOP_USER`/`ITOP_PASS` when an iTop instance is reachable. It's invoked
+whenever an ingest payload sets `itop_auto_ticket: true` (the ETL sets this
+for `critical`/`high` events in `transform/normalize.py`).
 
 `dim_node.itop_ci_id` exists in the schema for linking a node to its iTop CMDB
 CI record, but nothing currently populates or reads it outside seed data.
 
 ## Webhook authentication
 
-All external systems calling into this API (real or simulated) authenticate
-with a single static bearer key, not per-tool credentials:
+All external systems calling into this API authenticate with a single static
+bearer key, not per-tool credentials:
 
 ```
 Authorization: Bearer $NOC_API_KEY
 ```
 
-checked by `verify_api_key` (`backend/app/core/security.py`) against
-`POST /api/incidents/ingest` only. This matches cahier des charges §10.1
-("clé API statique pour les webhooks"). The `ZABBIX_USER`/`ZABBIX_PASSWORD`,
-`CENTREON_API_KEY`, `NAGIOS_API_KEY` etc. env vars are for the **outbound**
-direction — i.e. what this backend would use to *poll* those tools' own APIs
-(Zabbix/Nagios) — separate from the shared inbound `NOC_API_KEY` tools would
-use to push webhooks to `/ingest` (Centreon-style push).
-
-## Swapping a simulator for the real thing
-
-Each simulator function carries a docstring naming its real equivalent — start
-there:
-
-| File | Function | Real equivalent |
-|---|---|---|
-| `etl/extract/simulators.py` | `poll_zabbix` | `POST` JSON-RPC `event.get` on `ZABBIX_API_URL` |
-| `etl/extract/simulators.py` | `poll_nagios` | `GET {NAGIOS_API_URL}/cgi-bin/statusjson.cgi?query=hostlist` |
-| `etl/extract/simulators.py` | `poll_netxms` | NetXMS REST event query |
-| `etl/extract/simulators.py` | `poll_centreon` | Receive Centreon broker webhook payload (may invert the flow: Centreon pushes to a new endpoint rather than being polled) |
-| `backend/app/services/itop_service.py` | `create_ticket` | `requests.post(ITOP_URL, ...)` calling iTop's `core/create` REST operation with `ITOP_USER`/`ITOP_PASS` |
-
-For the three poll-based tools (Zabbix, Nagios, NetXMS), the natural place to
-add real calls is inside the corresponding `poll_*` function in
-`etl/extract/simulators.py` — keep the return shape (`node_code, source_tool,
-external_id, severity, detected_at, cause_category, cause_label,
-description`) so `transform/normalize.py` doesn't need to change. For
-Centreon's webhook-push model, add a new inbound endpoint (or reuse
-`/api/incidents/ingest` directly from Centreon, which already accepts
-`source_tool: "centreon"`) instead of polling it from the ETL worker.
+checked by `verify_api_key` (`backend/app/core/security.py`) on
+`POST /api/incidents/ingest` (and accepted on `GET /api/report/monthly` for
+the scheduled export). This matches cahier des charges §10.1 ("clé API
+statique pour les webhooks"). The per-tool `ZABBIX_*`/`NAGIOS_*`/`NETXMS_*`/
+`CENTREON_*` variables are for the **outbound** direction — what the ETL uses
+to poll those tools' own APIs — separate from the shared inbound `NOC_API_KEY`
+tools use to push webhooks to `/ingest`.

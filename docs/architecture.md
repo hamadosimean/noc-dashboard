@@ -63,7 +63,7 @@ quick overview and getting-started steps, see the [README](../README.md).
 | `postgres` | `postgres:15-alpine` | System of record — dimensions, incidents, users; runs `database/*.sql` on first boot |
 | `redis` | `redis:7` | Four roles on one instance: KPI response cache + rate-limit counters + `noc:alerts` pub/sub channel (DB 0), and Celery broker (DB 1) |
 | `etl-worker` | `etl/Dockerfile` | Celery worker executing `etl.collect_incident`, `etl.refresh_kpi_view`, and `etl.generate_monthly_report`; mounts the `reports` volume at `/reports` |
-| `etl-beat` | `etl/Dockerfile` (different command) | Celery beat scheduler — `collect_incident` every `ETL_COLLECT_INTERVAL_S` seconds (default 30s), `refresh_kpi_view` daily at 02:00, `generate_monthly_report` on the 1st at 02:30 |
+| `etl-beat` | `etl/Dockerfile` (different command) | Celery beat scheduler — `collect_supervision` every `ETL_COLLECT_INTERVAL_S` seconds (default 300s), `refresh_kpi_view` daily at 02:00, `generate_monthly_report` on the 1st at 02:30 |
 
 Note: the `etl` service is Celery-based (`etl/celery_app.py`, `etl/pipelines/tasks.py`),
 split into a `beat` scheduler and a `worker` process — there is no single long-running
@@ -91,18 +91,27 @@ split into a `beat` scheduler and a `worker` process — there is no single long
 
 This is the path that keeps the dashboard feeling "live":
 
-1. `etl-beat` enqueues `etl.collect_incident` every `ETL_COLLECT_INTERVAL_S` seconds.
+1. `etl-beat` enqueues `etl.collect_supervision` every `ETL_COLLECT_INTERVAL_S`
+   seconds (default 300 — the spec's 5-minute batch, §2.2).
 2. `etl-worker` picks up the task:
-   - Loads all `is_active = TRUE` nodes directly from Postgres (`pipelines/collector.py`).
-   - Picks one at random and fabricates a plausible event via
-     `extract/simulators.py` (per-tool cause/severity tables for Zabbix/Nagios/
-     NetXMS/Centreon).
-   - Normalizes it into the ingest payload shape (`transform/normalize.py`).
-   - POSTs to `backend:8000/api/incidents/ingest` with
+   - Loads all `is_active = TRUE` nodes (code, name, IP, source_tool) from
+     Postgres (`pipelines/collector.py`).
+   - Polls every **configured** supervision tool (`extract/` — a tool is
+     enabled iff its `*_API_URL` env var is set): Zabbix JSON-RPC `event.get`,
+     Nagios `statusjson.cgi?query=hostlist`, NetXMS REST `/alarms`, Centreon
+     REST v2 `/monitoring/resources`. Failures are isolated per tool.
+   - Maps each alert onto a `dim_node` code (exact code → name → IP match,
+     `extract/common.py`); unmatched hosts are logged and skipped.
+   - Tracks a per-tool last-poll timestamp in Redis (`etl:last_poll:{tool}`)
+     so restarts don't re-fetch history.
+   - Normalizes events into the ingest payload shape (`transform/normalize.py`)
+     and POSTs to `backend:8000/api/incidents/ingest` with
      `Authorization: Bearer $NOC_API_KEY` (`load/api_client.py`).
-   - Retries up to 3 times (10s backoff) on failure.
 3. The backend's `incident_service.ingest_incident`:
    - Resolves the node by code, gets-or-creates the cause dimension row.
+   - **Deduplicates**: a payload whose `(source_tool, external_id)` matches an
+     already-open incident returns that incident (HTTP 200, no side effects) —
+     status pollers legitimately re-report active problems every pass.
    - Inserts the `fact_incident` row.
    - Optionally mints an iTop ticket reference (`itop_service.create_ticket` — currently
      stubbed, see [integrations.md](integrations.md)).
@@ -164,12 +173,12 @@ Celery beat (`etl/celery_app.py`) drives three schedules, executed by
 
 | Task | Schedule | What it does |
 |---|---|---|
-| `etl.collect_incident` | every `ETL_COLLECT_INTERVAL_S` (default 30s) | Simulates one supervision-tool alert and POSTs it to `/ingest` |
+| `etl.collect_supervision` | every `ETL_COLLECT_INTERVAL_S` (default 300s, spec §2.2) | Polls every configured supervision-tool API and POSTs new alerts to `/ingest` |
 | `etl.refresh_kpi_view` | daily **02:00** | `REFRESH MATERIALIZED VIEW CONCURRENTLY mv_kpi_node_monthly` (spec §2.2 nightly batch; `CONCURRENTLY` works because the view has a unique index on `(month, node_id)`) |
 | `etl.generate_monthly_report` | **1st of month, 02:30** | Downloads the previous month's report from `/api/report/monthly` (PDF + DOCX, authenticating with the static API key) and archives both to the `reports` volume (`/reports`) |
 
 The synchronous refresh-on-write in the backend (`SYNC_MV_REFRESH`, default
-`true`) exists so the demo reflects each simulated incident instantly; set it
+`true`) exists so small demo datasets reflect each ingested incident instantly; set it
 to `false` in production and let the nightly job own the refresh.
 
 ## Security: RBAC & rate limiting

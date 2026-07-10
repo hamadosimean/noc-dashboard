@@ -54,8 +54,38 @@ def refresh_kpi_view(db: Session) -> None:
     db.commit()
 
 
-def ingest_incident(db: Session, payload: IncidentIngestPayload) -> Incident:
+def find_open_duplicate(
+    db: Session, external_id: str | None, source_tool: str
+) -> Incident | None:
+    """An unresolved incident already ingested for this exact alert.
+
+    Real collectors re-report a still-active problem on every poll (Nagios
+    host status, NetXMS alarms…) with a stable external_id — matching it here
+    makes ingestion idempotent. A resolved/closed incident does NOT match: the
+    same alert firing again after recovery is a genuinely new incident.
+    """
+    if not external_id:
+        return None
+    return (
+        db.query(Incident)
+        .filter(
+            Incident.external_id == external_id,
+            Incident.source_tool == source_tool,
+            Incident.status.in_(("open", "acknowledged")),
+        )
+        .first()
+    )
+
+
+def ingest_incident(db: Session, payload: IncidentIngestPayload) -> tuple[Incident, bool]:
+    """Returns (incident, created) — created is False when the payload matched
+    an already-open incident and no new row was written."""
     node = get_node_by_code(db, payload.node_code)
+
+    duplicate = find_open_duplicate(db, payload.external_id, payload.source_tool)
+    if duplicate is not None:
+        return duplicate, False
+
     cause = get_or_create_cause(db, payload.cause_category, payload.cause_label)
 
     incident = Incident(
@@ -80,7 +110,7 @@ def ingest_incident(db: Session, payload: IncidentIngestPayload) -> Incident:
         db.refresh(incident)
 
     refresh_kpi_view(db)
-    return incident
+    return incident, True
 
 
 def resolve_incident(

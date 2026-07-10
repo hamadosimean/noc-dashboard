@@ -1,8 +1,12 @@
 from datetime import date
 from typing import Optional
 
-from sqlalchemy import text
+from sqlalchemy import Integer, and_, cast, desc, distinct, func, select
 from sqlalchemy.orm import Session
+
+from app.models.dimension import Cause, Locality, Node, Region
+from app.models.incident import Incident
+from app.models.kpi import KpiNodeMonthly as mv
 
 FRENCH_MONTHS = [
     "",
@@ -41,40 +45,51 @@ def shift_months(month: int, year: int, offset: int) -> tuple[int, int]:
     return (total % 12) + 1, total // 12
 
 
+def _month_aggregates(db: Session, period_start: date):
+    """Whole-network aggregates over the materialized view for one month."""
+    return (
+        db.execute(
+            select(
+                func.coalesce(func.sum(mv.total_incidents), 0).label("total_incidents"),
+                func.coalesce(func.sum(mv.resolved), 0).label("resolved"),
+                func.coalesce(func.avg(mv.avg_mttr), 0).label("avg_mttr"),
+                func.coalesce(func.avg(mv.availability_pct), 100).label("availability_pct"),
+            ).where(mv.month == period_start)
+        )
+        .mappings()
+        .first()
+    )
+
+
 def get_summary(db: Session, month: int, year: int) -> dict:
     period_start = month_start(month, year)
 
     row = (
         db.execute(
-            text("""
-            SELECT
-              COALESCE(SUM(total_incidents), 0)      AS total_incidents,
-              COALESCE(SUM(resolved), 0)              AS resolved,
-              COALESCE(AVG(avg_mttr), 0)               AS avg_mttr,
-              COALESCE(AVG(availability_pct), 100)     AS availability_pct,
-              COUNT(DISTINCT locality_id) FILTER (WHERE availability_pct < :threshold) AS critical_localities,
-              COUNT(*) FILTER (WHERE total_incidents >= :min_count) AS recurrent_nodes
-            FROM mv_kpi_node_monthly
-            WHERE month = :period_start
-            """),
-            {
-                "period_start": period_start,
-                "threshold": CRITICAL_AVAILABILITY_THRESHOLD,
-                "min_count": RECURRENT_MIN_COUNT_DEFAULT,
-            },
+            select(
+                func.coalesce(func.sum(mv.total_incidents), 0).label("total_incidents"),
+                func.coalesce(func.sum(mv.resolved), 0).label("resolved"),
+                func.coalesce(func.avg(mv.avg_mttr), 0).label("avg_mttr"),
+                func.coalesce(func.avg(mv.availability_pct), 100).label("availability_pct"),
+                func.count(distinct(mv.locality_id))
+                .filter(mv.availability_pct < CRITICAL_AVAILABILITY_THRESHOLD)
+                .label("critical_localities"),
+                func.count()
+                .filter(mv.total_incidents >= RECURRENT_MIN_COUNT_DEFAULT)
+                .label("recurrent_nodes"),
+            ).where(mv.month == period_start)
         )
         .mappings()
         .first()
     )
 
     off_hours = db.execute(
-        text("""
-            SELECT COUNT(*) AS off_hours
-            FROM fact_incident
-            WHERE shift = 'auto'
-              AND DATE_TRUNC('month', detected_at) = :period_start
-            """),
-        {"period_start": period_start},
+        select(func.count())
+        .select_from(Incident)
+        .where(
+            Incident.shift == "auto",
+            func.date_trunc("month", Incident.detected_at) == period_start,
+        )
     ).scalar()
 
     total_incidents = int(row["total_incidents"])
@@ -85,21 +100,7 @@ def get_summary(db: Session, month: int, year: int) -> dict:
     )
 
     pm_month, pm_year = prev_month(month, year)
-    pm_period_start = month_start(pm_month, pm_year)
-    prev_row = (
-        db.execute(
-            text("""
-            SELECT
-              COALESCE(SUM(total_incidents), 0)  AS total_incidents,
-              COALESCE(AVG(availability_pct), 100) AS availability_pct
-            FROM mv_kpi_node_monthly
-            WHERE month = :period_start
-            """),
-            {"period_start": pm_period_start},
-        )
-        .mappings()
-        .first()
-    )
+    prev_row = _month_aggregates(db, month_start(pm_month, pm_year))
 
     kpi = {
         "total_incidents": total_incidents,
@@ -154,32 +155,36 @@ def get_comparison(
                 "deltas": deltas,
             }
         )
-    return {"period": current["period"], "kpi": current["kpi"], "comparisons": comparisons}
+    return {
+        "period": current["period"],
+        "kpi": current["kpi"],
+        "comparisons": comparisons,
+    }
 
 
 def get_localities(db: Session, month: int, year: int, limit: int = 10) -> list[dict]:
     period_start = month_start(month, year)
     rows = (
         db.execute(
-            text("""
-            SELECT
-              mv.locality_id,
-              mv.locality,
-              mv.region,
-              l.latitude,
-              l.longitude,
-              SUM(mv.total_incidents)  AS total_incidents,
-              SUM(mv.resolved)         AS resolved,
-              AVG(mv.avg_mttr)         AS avg_mttr,
-              AVG(mv.availability_pct) AS availability_pct
-            FROM mv_kpi_node_monthly mv
-            JOIN dim_locality l ON l.id = mv.locality_id
-            WHERE mv.month = :period_start
-            GROUP BY mv.locality_id, mv.locality, mv.region, l.latitude, l.longitude
-            ORDER BY total_incidents DESC
-            LIMIT :limit
-            """),
-            {"period_start": period_start, "limit": limit},
+            select(
+                mv.locality_id,
+                mv.locality,
+                mv.region,
+                Locality.latitude,
+                Locality.longitude,
+                func.sum(mv.total_incidents).label("total_incidents"),
+                func.sum(mv.resolved).label("resolved"),
+                func.avg(mv.avg_mttr).label("avg_mttr"),
+                func.avg(mv.availability_pct).label("availability_pct"),
+            )
+            .join(Locality, Locality.id == mv.locality_id)
+            .where(mv.month == period_start)
+            .group_by(
+                mv.locality_id, mv.locality, mv.region,
+                Locality.latitude, Locality.longitude,
+            )
+            .order_by(desc("total_incidents"))
+            .limit(limit)
         )
         .mappings()
         .all()
@@ -214,26 +219,28 @@ def get_localities_map(db: Session, month: int, year: int) -> list[dict]:
     period_start = month_start(month, year)
     rows = (
         db.execute(
-            text("""
-            SELECT
-              l.id AS locality_id,
-              l.name AS locality,
-              r.name AS region,
-              l.latitude,
-              l.longitude,
-              COALESCE(SUM(mv.total_incidents), 0)  AS total_incidents,
-              COALESCE(SUM(mv.resolved), 0)         AS resolved,
-              AVG(mv.avg_mttr)                       AS avg_mttr,
-              COALESCE(AVG(mv.availability_pct), 100) AS availability_pct
-            FROM dim_locality l
-            JOIN dim_region r ON r.id = l.region_id
-            LEFT JOIN mv_kpi_node_monthly mv
-              ON mv.locality_id = l.id AND mv.month = :period_start
-            WHERE l.latitude IS NOT NULL AND l.longitude IS NOT NULL
-            GROUP BY l.id, l.name, r.name, l.latitude, l.longitude
-            ORDER BY total_incidents DESC
-            """),
-            {"period_start": period_start},
+            select(
+                Locality.id.label("locality_id"),
+                Locality.name.label("locality"),
+                Region.name.label("region"),
+                Locality.latitude,
+                Locality.longitude,
+                func.coalesce(func.sum(mv.total_incidents), 0).label("total_incidents"),
+                func.coalesce(func.sum(mv.resolved), 0).label("resolved"),
+                func.avg(mv.avg_mttr).label("avg_mttr"),
+                func.coalesce(func.avg(mv.availability_pct), 100).label("availability_pct"),
+            )
+            .select_from(Locality)
+            .join(Region, Region.id == Locality.region_id)
+            .outerjoin(
+                mv, and_(mv.locality_id == Locality.id, mv.month == period_start)
+            )
+            .where(Locality.latitude.isnot(None), Locality.longitude.isnot(None))
+            .group_by(
+                Locality.id, Locality.name, Region.name,
+                Locality.latitude, Locality.longitude,
+            )
+            .order_by(desc("total_incidents"))
         )
         .mappings()
         .all()
@@ -265,22 +272,15 @@ def get_nodes(
     limit: int = 10,
 ) -> list[dict]:
     period_start = month_start(month, year)
-    rows = (
-        db.execute(
-            text("""
-            SELECT node_id, code, name, source_tool, locality,
-                   total_incidents, resolved, avg_mttr, availability_pct
-            FROM mv_kpi_node_monthly
-            WHERE month = :period_start
-              AND (:locality_id IS NULL OR locality_id = :locality_id)
-            ORDER BY total_incidents DESC
-            LIMIT :limit
-            """),
-            {"period_start": period_start, "locality_id": locality_id, "limit": limit},
-        )
-        .mappings()
-        .all()
-    )
+    stmt = select(
+        mv.node_id, mv.code, mv.name, mv.source_tool, mv.locality,
+        mv.total_incidents, mv.resolved, mv.avg_mttr, mv.availability_pct,
+    ).where(mv.month == period_start)
+    if locality_id is not None:
+        stmt = stmt.where(mv.locality_id == locality_id)
+    stmt = stmt.order_by(mv.total_incidents.desc()).limit(limit)
+
+    rows = db.execute(stmt).mappings().all()
 
     return [
         {
@@ -310,13 +310,9 @@ def get_recurrent_nodes(
     period_start = month_start(month, year)
     rows = (
         db.execute(
-            text("""
-            SELECT node_id, code, name, locality, total_incidents
-            FROM mv_kpi_node_monthly
-            WHERE month = :period_start AND total_incidents >= :min_count
-            ORDER BY total_incidents DESC
-            """),
-            {"period_start": period_start, "min_count": min_count},
+            select(mv.node_id, mv.code, mv.name, mv.locality, mv.total_incidents)
+            .where(mv.month == period_start, mv.total_incidents >= min_count)
+            .order_by(mv.total_incidents.desc())
         )
         .mappings()
         .all()
@@ -338,23 +334,7 @@ def get_trend(db: Session, month: int, year: int, months: int = 6) -> list[dict]
     points = []
     for offset in range(months - 1, -1, -1):
         m, y = shift_months(month, year, offset)
-        period_start = month_start(m, y)
-        row = (
-            db.execute(
-                text("""
-                SELECT
-                  COALESCE(SUM(total_incidents), 0) AS total_incidents,
-                  COALESCE(SUM(resolved), 0)         AS resolved,
-                  COALESCE(AVG(avg_mttr), 0)          AS avg_mttr,
-                  COALESCE(AVG(availability_pct), 100) AS availability_pct
-                FROM mv_kpi_node_monthly
-                WHERE month = :period_start
-                """),
-                {"period_start": period_start},
-            )
-            .mappings()
-            .first()
-        )
+        row = _month_aggregates(db, month_start(m, y))
         points.append(
             {
                 "month": m,
@@ -371,15 +351,12 @@ def get_trend(db: Session, month: int, year: int, months: int = 6) -> list[dict]
 
 def get_hour_distribution(db: Session, month: int, year: int) -> list[dict]:
     period_start = month_start(month, year)
+    hour = cast(func.extract("hour", Incident.detected_at), Integer).label("hour")
     rows = (
         db.execute(
-            text("""
-            SELECT EXTRACT(HOUR FROM detected_at)::int AS hour, COUNT(*) AS total_incidents
-            FROM fact_incident
-            WHERE DATE_TRUNC('month', detected_at) = :period_start
-            GROUP BY hour
-            """),
-            {"period_start": period_start},
+            select(hour, func.count().label("total_incidents"))
+            .where(func.date_trunc("month", Incident.detected_at) == period_start)
+            .group_by(hour)
         )
         .mappings()
         .all()
@@ -390,12 +367,7 @@ def get_hour_distribution(db: Session, month: int, year: int) -> list[dict]:
 
 
 def get_latest_data_month(db: Session) -> tuple[int, int]:
-    row = (
-        db.execute(text("SELECT MAX(month) AS latest FROM mv_kpi_node_monthly"))
-        .mappings()
-        .first()
-    )
-    latest = row["latest"]
+    latest = db.execute(select(func.max(mv.month))).scalar()
     if latest is None:
         today = date.today()
         return today.month, today.year
@@ -406,15 +378,16 @@ def get_cause_breakdown(db: Session, month: int, year: int) -> list[dict]:
     period_start = month_start(month, year)
     rows = (
         db.execute(
-            text("""
-            SELECT c.category, COUNT(i.id) AS total_incidents, AVG(i.mttr_minutes) AS avg_mttr
-            FROM fact_incident i
-            JOIN dim_cause c ON i.cause_id = c.id
-            WHERE DATE_TRUNC('month', i.detected_at) = :period_start
-            GROUP BY c.category
-            ORDER BY total_incidents DESC
-            """),
-            {"period_start": period_start},
+            select(
+                Cause.category,
+                func.count(Incident.id).label("total_incidents"),
+                func.avg(Incident.mttr_minutes).label("avg_mttr"),
+            )
+            .select_from(Incident)
+            .join(Cause, Incident.cause_id == Cause.id)
+            .where(func.date_trunc("month", Incident.detected_at) == period_start)
+            .group_by(Cause.category)
+            .order_by(desc("total_incidents"))
         )
         .mappings()
         .all()
@@ -444,21 +417,15 @@ def get_sla(db: Session, month: int, year: int) -> dict:
     kpi = summary["kpi"]
 
     period_start = month_start(month, year)
-    core_row = (
-        db.execute(
-            text("""
-            SELECT AVG(availability_pct) AS availability_pct
-            FROM mv_kpi_node_monthly
-            WHERE month = :period_start AND source_tool IN ('centreon', 'netxms')
-            """),
-            {"period_start": period_start},
+    core_availability_raw = db.execute(
+        select(func.avg(mv.availability_pct)).where(
+            mv.month == period_start,
+            mv.source_tool.in_(("centreon", "netxms")),
         )
-        .mappings()
-        .first()
-    )
+    ).scalar()
     core_availability = (
-        round(float(core_row["availability_pct"]), 1)
-        if core_row and core_row["availability_pct"] is not None
+        round(float(core_availability_raw), 1)
+        if core_availability_raw is not None
         else kpi["network_availability_pct"]
     )
 
@@ -493,13 +460,13 @@ def get_locality_nodes(
 
     locality_row = (
         db.execute(
-            text("""
-            SELECT l.id AS locality_id, l.name AS locality, r.name AS region
-            FROM dim_locality l
-            JOIN dim_region r ON l.region_id = r.id
-            WHERE l.id = :locality_id
-            """),
-            {"locality_id": locality_id},
+            select(
+                Locality.id.label("locality_id"),
+                Locality.name.label("locality"),
+                Region.name.label("region"),
+            )
+            .join(Region, Locality.region_id == Region.id)
+            .where(Locality.id == locality_id)
         )
         .mappings()
         .first()
@@ -507,22 +474,25 @@ def get_locality_nodes(
     if locality_row is None:
         return None
 
+    total_incidents = func.coalesce(mv.total_incidents, 0).label("total_incidents")
     rows = (
         db.execute(
-            text("""
-            SELECT
-              n.id AS node_id, n.code, n.name, n.node_type, n.source_tool, n.is_active,
-              COALESCE(mv.total_incidents, 0) AS total_incidents,
-              COALESCE(mv.resolved, 0)        AS resolved,
-              mv.avg_mttr,
-              COALESCE(mv.availability_pct, 100) AS availability_pct
-            FROM dim_node n
-            LEFT JOIN mv_kpi_node_monthly mv
-              ON mv.node_id = n.id AND mv.month = :period_start
-            WHERE n.locality_id = :locality_id
-            ORDER BY total_incidents DESC, n.code
-            """),
-            {"locality_id": locality_id, "period_start": period_start},
+            select(
+                Node.id.label("node_id"),
+                Node.code,
+                Node.name,
+                Node.node_type,
+                Node.source_tool,
+                Node.is_active,
+                total_incidents,
+                func.coalesce(mv.resolved, 0).label("resolved"),
+                mv.avg_mttr,
+                func.coalesce(mv.availability_pct, 100).label("availability_pct"),
+            )
+            .select_from(Node)
+            .outerjoin(mv, and_(mv.node_id == Node.id, mv.month == period_start))
+            .where(Node.locality_id == locality_id)
+            .order_by(desc("total_incidents"), Node.code)
         )
         .mappings()
         .all()

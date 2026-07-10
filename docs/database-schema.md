@@ -73,7 +73,7 @@ Represents a monitored network element (router, switch, VSAT terminal, etc).
 | `ip_address` | `INET` | nullable |
 | `source_tool` | `VARCHAR(20)` | `CHECK IN ('zabbix','nagios','netxms','centreon')` — which supervision tool owns this node |
 | `itop_ci_id` | `VARCHAR(50)` | nullable — linked iTop CMDB CI, if any |
-| `is_active` | `BOOLEAN` | default `TRUE`; the ETL simulator only picks active nodes |
+| `is_active` | `BOOLEAN` | default `TRUE`; the ETL collectors only match against active nodes |
 | `created_at` | `TIMESTAMP` | default `NOW()` |
 
 ### `dim_cause`
@@ -86,7 +86,7 @@ Represents a monitored network element (router, switch, VSAT terminal, etc).
 | | | `UNIQUE(category, label)` |
 
 Rows are created lazily on ingest (`incident_service.get_or_create_cause`) —
-there's no fixed seed list beyond what `generate_seed.py`/the simulator produce.
+there's no fixed seed list beyond what `generate_seed.py` and live ingestion produce.
 
 ### `dim_user`
 
@@ -170,7 +170,7 @@ Unique index on `(month, node_id)`.
   so dashboard reads are never blocked).
 - **Synchronous per-write (demo)** — when `SYNC_MV_REFRESH=true` (the
   default), every ingest/resolve also refreshes the view
-  (`incident_service.refresh_kpi_view`) so simulated incidents show up
+  (`incident_service.refresh_kpi_view`) so newly ingested incidents show up
   instantly. Set it to `false` in production, where per-write refresh becomes
   a write-latency problem at real incident volume.
 

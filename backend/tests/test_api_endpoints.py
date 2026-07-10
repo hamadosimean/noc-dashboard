@@ -148,7 +148,9 @@ def fake_ingest(monkeypatch):
     published = []
     notified = []
     monkeypatch.setattr(
-        incidents_routes.incident_service, "ingest_incident", lambda db, payload: FAKE_INCIDENT
+        incidents_routes.incident_service,
+        "ingest_incident",
+        lambda db, payload: (FAKE_INCIDENT, True),
     )
     monkeypatch.setattr(
         incidents_routes.incident_service,
@@ -198,12 +200,31 @@ def test_ingest_non_critical_does_not_notify(client, fake_ingest, monkeypatch):
     published, notified = fake_ingest
     medium_incident = SimpleNamespace(**{**FAKE_INCIDENT.__dict__, "severity": "medium"})
     monkeypatch.setattr(
-        incidents_routes.incident_service, "ingest_incident", lambda db, payload: medium_incident
+        incidents_routes.incident_service,
+        "ingest_incident",
+        lambda db, payload: (medium_incident, True),
     )
     payload = {**INGEST_PAYLOAD, "severity": "medium"}
     response = client.post("/api/incidents/ingest", json=payload, headers=API_KEY_HEADERS)
     assert response.status_code == 201
     assert len(published) == 1
+    assert notified == []
+
+
+def test_ingest_duplicate_is_idempotent(client, fake_ingest, monkeypatch):
+    """A re-reported still-open alert returns 200 and triggers no side effects."""
+    published, notified = fake_ingest
+    monkeypatch.setattr(
+        incidents_routes.incident_service,
+        "ingest_incident",
+        lambda db, payload: (FAKE_INCIDENT, False),
+    )
+    response = client.post(
+        "/api/incidents/ingest", json=INGEST_PAYLOAD, headers=API_KEY_HEADERS
+    )
+    assert response.status_code == 200
+    assert response.json()["incident_id"] == FAKE_INCIDENT.id
+    assert published == []
     assert notified == []
 
 

@@ -21,6 +21,49 @@ def broker_url() -> str:
 
 NOC_API_URL = os.getenv("NOC_API_URL", "http://backend:8000")
 NOC_API_KEY = os.getenv("NOC_API_KEY", "dev-noc-api-key")
-COLLECT_INTERVAL_S = int(os.getenv("ETL_COLLECT_INTERVAL_S", "30"))
+# Spec §2.2: batch collection polls the supervision APIs every 5 minutes.
+COLLECT_INTERVAL_S = int(os.getenv("ETL_COLLECT_INTERVAL_S", "300"))
 # Where the scheduled end-of-month exports are written (mounted volume).
 REPORTS_DIR = os.getenv("REPORTS_DIR", "/reports")
+
+REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+
+HTTP_TIMEOUT_S = int(os.getenv("ETL_HTTP_TIMEOUT_S", "15"))
+
+# ── Supervision tool endpoints ──────────────────────────────────────────────
+# A collector runs only when its *_API_URL is set; unset tools are skipped.
+# Cahier des charges §6.1–6.3.
+
+ZABBIX_API_URL = os.getenv(
+    "ZABBIX_API_URL", ""
+).strip()  # e.g. https://zabbix.anptic.bf/api_jsonrpc.php
+ZABBIX_USER = os.getenv("ZABBIX_USER", "")
+ZABBIX_PASSWORD = os.getenv("ZABBIX_PASSWORD", "")
+ZABBIX_API_TOKEN = os.getenv(
+    "ZABBIX_API_TOKEN", ""
+)  # Zabbix ≥ 5.4 API token (skips user.login)
+
+NAGIOS_API_URL = os.getenv(
+    "NAGIOS_API_URL", ""
+).strip()  # e.g. https://nagios.anptic.bf/nagios
+NAGIOS_USER = os.getenv("NAGIOS_USER", "")
+NAGIOS_PASSWORD = os.getenv("NAGIOS_PASSWORD", "")
+NAGIOS_API_KEY = os.getenv(
+    "NAGIOS_API_KEY", ""
+)  # sent as X-Auth-Token if set (spec §6.2)
+
+NETXMS_API_URL = os.getenv(
+    "NETXMS_API_URL", ""
+).strip()  # e.g. https://netxms.anptic.bf/rest
+NETXMS_USER = os.getenv("NETXMS_USER", "")
+NETXMS_PASSWORD = os.getenv("NETXMS_PASSWORD", "")
+
+CENTREON_API_URL = os.getenv(
+    "CENTREON_API_URL", ""
+).strip()  # e.g. https://centreon.anptic.bf/centreon/api/latest
+CENTREON_USER = os.getenv("CENTREON_USER", "")
+CENTREON_PASSWORD = os.getenv("CENTREON_PASSWORD", "")
+CENTREON_API_KEY = os.getenv(
+    "CENTREON_API_KEY", ""
+)  # static X-AUTH-TOKEN, alternative to user/password login

@@ -66,6 +66,22 @@ services:
       - REDIS_PORT=${REDIS_PORT}
       - CELERY_BROKER_DB=${CELERY_BROKER_DB:-1}
       - REPORTS_DIR=/reports
+      # Supervision tool endpoints — a collector runs only when its URL is set
+      - ZABBIX_API_URL=${ZABBIX_API_URL:-}
+      - ZABBIX_USER=${ZABBIX_USER:-}
+      - ZABBIX_PASSWORD=${ZABBIX_PASSWORD:-}
+      - ZABBIX_API_TOKEN=${ZABBIX_API_TOKEN:-}
+      - NAGIOS_API_URL=${NAGIOS_API_URL:-}
+      - NAGIOS_USER=${NAGIOS_USER:-}
+      - NAGIOS_PASSWORD=${NAGIOS_PASSWORD:-}
+      - NAGIOS_API_KEY=${NAGIOS_API_KEY:-}
+      - NETXMS_API_URL=${NETXMS_API_URL:-}
+      - NETXMS_USER=${NETXMS_USER:-}
+      - NETXMS_PASSWORD=${NETXMS_PASSWORD:-}
+      - CENTREON_API_URL=${CENTREON_API_URL:-}
+      - CENTREON_USER=${CENTREON_USER:-}
+      - CENTREON_PASSWORD=${CENTREON_PASSWORD:-}
+      - CENTREON_API_KEY=${CENTREON_API_KEY:-}
     volumes:
       - reports:/reports
     depends_on:
@@ -96,7 +112,7 @@ services:
       - REDIS_HOST=${REDIS_HOST}
       - REDIS_PORT=${REDIS_PORT}
       - CELERY_BROKER_DB=${CELERY_BROKER_DB:-1}
-      - ETL_COLLECT_INTERVAL_S=${ETL_COLLECT_INTERVAL_S:-30}
+      - ETL_COLLECT_INTERVAL_S=${ETL_COLLECT_INTERVAL_S:-300}
     depends_on:
       redis:
         condition: service_healthy

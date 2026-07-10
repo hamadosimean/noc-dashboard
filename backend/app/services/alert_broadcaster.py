@@ -5,6 +5,7 @@ The HTTP worker publishes each new incident on ALERT_CHANNEL; every open
 WebSocket connection (possibly on another uvicorn worker) is subscribed and
 forwards the message to its client.
 """
+
 import json
 import logging
 from typing import Any

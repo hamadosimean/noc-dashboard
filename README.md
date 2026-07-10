@@ -24,7 +24,7 @@
 - [Branding: Logo & Favicon](#branding-logo--favicon)
 - [Integrations](#integrations)
 - [API Documentation](#api-documentation)
-- [Demo Data & Simulator](#demo-data--simulator)
+- [Demo Data & ETL Collection](#demo-data--etl-collection)
 - [Further Documentation](#further-documentation)
 - [Contributing](#contributing)
 
@@ -68,8 +68,9 @@ The application follows a **containerized 3-tier architecture** orchestrated via
                                               └────────────┘ └───────────┘
 
                         ┌─────────────────────────────────────────────┐
-                        │  ETL simulator — posts a synthetic incident  │
-                        │  to /api/incidents/ingest every 20-60s        │
+                        │  ETL collectors — poll the configured         │
+                        │  Zabbix/Nagios/NetXMS/Centreon APIs every     │
+                        │  5 min and POST to /api/incidents/ingest      │
                         └─────────────────────────────────────────────┘
 ```
 
@@ -80,7 +81,7 @@ The application follows a **containerized 3-tier architecture** orchestrated via
 | **Database** | PostgreSQL 15 | Persistent storage (dimensions, incidents, users) |
 | **Cache** | Redis 7 | KPI caching, rate-limit counters, Celery broker, alert pub/sub |
 | **Proxy** | NGINX | TLS termination, HTTP→HTTPS redirect, reverse proxy (`/api`, `/ws`) |
-| **ETL** | Python + Celery | Simulates supervision-tool webhooks; nightly KPI refresh (02:00); end-of-month report archive |
+| **ETL** | Python + Celery | Polls the configured Zabbix/Nagios/NetXMS/Centreon APIs (5-min batch); nightly KPI refresh (02:00); end-of-month report archive |
 | **Notifications** | Twilio + SMTP | SMS + email to the NOC on critical incidents (off by default) |
 
 ---
@@ -204,13 +205,13 @@ noc/
 │       ├── pages/                # Login + dashboard views (Global, Localities, SLA, Interop, Data Model)
 │       └── store/                # Zustand stores: period, theme, auth (persisted)
 │
-└── etl/                          # Collector + scheduled jobs service (see "Demo Data & Simulator" below)
+└── etl/                          # Collector + scheduled jobs service (see "Demo Data & ETL Collection" below)
     ├── celery_app.py              # Celery app + beat schedule: collect_incident (every ETL_COLLECT_INTERVAL_S),
     │                              #   refresh_kpi_view (daily 02:00), generate_monthly_report (1st of month, 02:30)
     ├── config.py                  # DB DSN / broker URL / API URL / REPORTS_DIR helpers
     ├── pipelines/                 # collector.py (loads active nodes), tasks.py (the Celery tasks)
-    ├── extract/                   # Per-tool event simulators (Zabbix/Nagios/NetXMS/Centreon)
-    ├── transform/                 # Normalizes simulator events into the ingest payload shape
+    ├── extract/                   # Real per-tool collectors (Zabbix JSON-RPC, Nagios statusjson, NetXMS REST, Centreon REST v2)
+    ├── transform/                 # Normalizes collected events into the ingest payload shape
     └── load/                      # Posts incidents to /api/incidents/ingest; downloads monthly reports
 ```
 
@@ -588,7 +589,7 @@ when `NOTIFICATIONS_ENABLED=true`.
 
 ---
 
-## Demo Data & Simulator
+## Demo Data & ETL Collection
 
 The database ships with a generated demo dataset so the dashboard is fully interactive out of the box — no real Zabbix/Nagios/Centreon/iTop instance required:
 
@@ -600,7 +601,7 @@ The database ships with a generated demo dataset so the dashboard is fully inter
   docker volume rm noc_pgdata         # drops the existing DB so init scripts re-run
   docker compose up -d
   ```
-- The **`etl` service** keeps the dashboard feeling live: it simulates a supervision-tool alert on a random active node every 20–60s and posts it to `/api/incidents/ingest`, approximating the always-on Zabbix/Nagios/Centreon → webhook flow from the cahier des charges (§2.2, §7.1). Its collectors (`etl/extract/simulators.py`) are stand-ins — swap them for real HTTP calls once real supervision tools are reachable.
+- The **`etl` service** runs **real collectors** (no simulation): every `ETL_COLLECT_INTERVAL_S` (default 5 min, spec §2.2) it polls each supervision tool whose `*_API_URL` is configured — Zabbix (JSON-RPC `event.get`), Nagios (`statusjson.cgi`), NetXMS (REST alarms), Centreon (REST v2 resources) — maps each alert onto a `dim_node` (by code, then name, then IP), and POSTs it to `/api/incidents/ingest`. Tools without an endpoint are skipped; one unreachable tool never blocks the others. Re-reported still-open alerts are deduplicated by the backend on `(source_tool, external_id)`. **To integrate: just set the tool's `*_API_URL` + credentials in `.env` and restart `etl-worker`** — see [docs/integrations.md](docs/integrations.md).
 - The same Celery beat also runs two **scheduled jobs** (cahier des charges §2.2 and §1.2):
   - `etl.refresh_kpi_view` — nightly at **02:00**, `REFRESH MATERIALIZED VIEW CONCURRENTLY mv_kpi_node_monthly`.
   - `etl.generate_monthly_report` — on the **1st of each month at 02:30**, downloads the previous month's report (PDF + DOCX) and archives it in the `reports` Docker volume (`/reports` inside `etl-worker`).
