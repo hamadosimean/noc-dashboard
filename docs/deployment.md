@@ -20,7 +20,7 @@ or production-style deployment.
 
 ## Services
 
-Defined in `docker-compose.yml`, seven containers total:
+Defined in `docker-compose.yml`. The dashboard stack proper:
 
 | Service | Build context | Exposed port(s) | Depends on (healthy) |
 |---|---|---|---|
@@ -32,14 +32,29 @@ Defined in `docker-compose.yml`, seven containers total:
 | `redis` | `redis:7` | `6379` | — |
 | `postgres` | `postgres:15-alpine` | `5432` | — |
 
+Plus the **bundled supervision/ITSM servers** the collectors poll (see
+[integrations.md](integrations.md)):
+
+| Service | Image | Exposed port(s) | Notes |
+|---|---|---|---|
+| `zabbix-server` | `zabbix/zabbix-server-pgsql:alpine-7.0-latest` | `10051:10051` | trapper port for LAN agents |
+| `zabbix-web` | `zabbix/zabbix-web-nginx-pgsql:alpine-7.0-latest` | `8081:8080` | UI + JSON-RPC API, `Admin`/`zabbix` |
+| `zabbix-agent` | `zabbix/zabbix-agent2:alpine-7.0-latest` | — | monitors the Zabbix host itself |
+| `zabbix-db` | `postgres:15-alpine` | — | Zabbix's own database |
+| `nagios` | `jasonrivers/nagios:latest` | `8083:80` | `$NAGIOS_USER`/`$NAGIOS_PASSWORD` |
+| `itop` | `vbkunin/itop:3.2.2` | `8082:80` | embedded MariaDB; one-time setup wizard |
+
 `etl-worker` and `etl-beat` share the same image/Dockerfile but run different
 Celery commands (`worker` vs `beat`) — see [architecture.md](architecture.md#components).
 
-Two named volumes: `pgdata` (Postgres data) and `reports` (mounted at
-`/reports` in `etl-worker` — the scheduled end-of-month job archives each
-month's PDF/DOCX report there; see
-[architecture.md#scheduled-jobs](architecture.md#scheduled-jobs)). To pull an
-archived report out of the volume:
+Named volumes: `pgdata` (Postgres data), `reports` (mounted at `/reports` in
+`etl-worker` — the scheduled end-of-month job archives each month's PDF/DOCX
+report there; see
+[architecture.md#scheduled-jobs](architecture.md#scheduled-jobs)), plus
+`zbx_pgdata` (Zabbix DB), `nagios_etc` (Nagios host/service definitions), and
+`itop_mysql`/`itop_html` (iTop database and installed app/config — the setup
+wizard's work survives container recreation). To pull an archived report out
+of the volume:
 
 ```bash
 docker compose exec etl-worker ls /reports
@@ -70,6 +85,12 @@ is set — see [integrations.md](integrations.md))
 `NETXMS_API_URL` + `NETXMS_USER`/`NETXMS_PASSWORD`,
 `CENTREON_API_URL` + `CENTREON_USER`/`CENTREON_PASSWORD` or `CENTREON_API_KEY`,
 `ITOP_URL/USER/PASS` (backend-side iTop stub)
+
+**Bundled supervision servers**
+`ZABBIX_DB_USER`/`ZABBIX_DB_PASSWORD`/`ZABBIX_DB_NAME` (the `zabbix-db`
+container), `ITOP_DB_PASSWORD` (iTop's embedded MariaDB `admin` user).
+`NAGIOS_USER`/`NAGIOS_PASSWORD` double as the Nagios container's `nagiosadmin`
+web credentials.
 
 **Notifications** (SMS + email on critical incidents — see
 [architecture.md#notifications-smsemail](architecture.md#notifications-smsemail))

@@ -90,17 +90,9 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
+      # CMD-SHELL so $HOSTNAME is expanded by the container shell
       test:
-        [
-          "CMD",
-          "celery",
-          "-A",
-          "celery_app",
-          "inspect",
-          "ping",
-          "-d",
-          "celery@$$HOSTNAME",
-        ]
+        ["CMD-SHELL", "celery -A celery_app inspect ping -d celery@$$HOSTNAME"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -181,6 +173,123 @@ services:
       timeout: 5s
       retries: 5
 
+  # ─────────────── Supervision / ITSM servers (local instances) ───────────────
+  # These are the tools the ETL collectors poll. Each collector activates as
+  # soon as its *_API_URL is set in .env (see docs/integrations.md).
+
+  # Zabbix — dedicated PostgreSQL (kept separate from the NOC database so the
+  # Zabbix schema never mixes with the dashboard schema).
+  zabbix-db:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=${ZABBIX_DB_USER:-zabbix}
+      - POSTGRES_PASSWORD=${ZABBIX_DB_PASSWORD:-zabbix_db_pass}
+      - POSTGRES_DB=${ZABBIX_DB_NAME:-zabbix}
+    volumes:
+      - zbx_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${ZABBIX_DB_USER:-zabbix} -d ${ZABBIX_DB_NAME:-zabbix}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  zabbix-server:
+    image: zabbix/zabbix-server-pgsql:alpine-7.0-latest
+    environment:
+      - DB_SERVER_HOST=zabbix-db
+      - POSTGRES_USER=${ZABBIX_DB_USER:-zabbix}
+      - POSTGRES_PASSWORD=${ZABBIX_DB_PASSWORD:-zabbix_db_pass}
+      - POSTGRES_DB=${ZABBIX_DB_NAME:-zabbix}
+    ports:
+      - "10051:10051" # trapper port — lets Zabbix agents on the LAN report in
+    depends_on:
+      zabbix-db:
+        condition: service_healthy
+
+  # Zabbix UI + JSON-RPC API — http://localhost:8081 (default login Admin/zabbix).
+  # The ETL polls http://zabbix-web:8080/api_jsonrpc.php on the compose network.
+  zabbix-web:
+    image: zabbix/zabbix-web-nginx-pgsql:alpine-7.0-latest
+    environment:
+      - ZBX_SERVER_HOST=zabbix-server
+      - DB_SERVER_HOST=zabbix-db
+      - POSTGRES_USER=${ZABBIX_DB_USER:-zabbix}
+      - POSTGRES_PASSWORD=${ZABBIX_DB_PASSWORD:-zabbix_db_pass}
+      - POSTGRES_DB=${ZABBIX_DB_NAME:-zabbix}
+      - PHP_TZ=${TZ:-Africa/Ouagadougou}
+    ports:
+      - "8081:8080"
+    depends_on:
+      zabbix-db:
+        condition: service_healthy
+      zabbix-server:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Agent monitoring the Zabbix server host itself, so the fresh install has at
+  # least one live host. In the Zabbix UI, point the "Zabbix server" host's
+  # agent interface at DNS name "zabbix-agent" to activate it.
+  zabbix-agent:
+    image: zabbix/zabbix-agent2:alpine-7.0-latest
+    environment:
+      - ZBX_HOSTNAME=Zabbix server
+      - ZBX_SERVER_HOST=zabbix-server
+    depends_on:
+      - zabbix-server
+
+  # Nagios Core — UI http://localhost:8083 (login: NAGIOS_USER/NAGIOS_PASSWORD).
+  # The ETL polls http://nagios/cgi-bin/statusjson.cgi with Basic auth.
+  nagios:
+    image: jasonrivers/nagios:latest
+    environment:
+      - NAGIOSADMIN_USER=${NAGIOS_USER:-nagiosadmin}
+      - NAGIOSADMIN_PASS=${NAGIOS_PASSWORD:-nagios}
+    ports:
+      - "8083:80"
+    volumes:
+      - nagios_etc:/opt/nagios/etc # host/service definitions survive restarts
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -fsu $${NAGIOSADMIN_USER}:$${NAGIOSADMIN_PASS} 'http://localhost/cgi-bin/statusjson.cgi?query=programstatus' > /dev/null",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # iTop (ITSM / CMDB) — all-in-one image with an embedded MariaDB.
+  # UI http://localhost:8082. First start: run the setup wizard with DB server
+  # "localhost", login "admin", password $ITOP_DB_PASSWORD — then set
+  # ITOP_USER/ITOP_PASS in .env to the iTop admin account you create.
+  # The backend calls http://itop/webservices/rest.php once the wizard is done.
+  itop:
+    image: vbkunin/itop:3.2.2
+    environment:
+      - MYSQL_PASS=${ITOP_DB_PASSWORD:-itop_db_pass} # embedded MariaDB 'admin' user
+    ports:
+      - "8082:80"
+    volumes:
+      - itop_mysql:/var/lib/mysql
+      - itop_html:/var/www/html # app + conf + compiled env from the setup wizard
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost/ > /dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
 volumes:
   pgdata:
   reports:
+  zbx_pgdata:
+  nagios_etc:
+  itop_mysql:
+  itop_html:

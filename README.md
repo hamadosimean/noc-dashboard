@@ -259,24 +259,30 @@ ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=30
 
 # ── Monitoring Tool Integrations ─────────────────────────
-ZABBIX_API_URL=http://your-zabbix-host/api_jsonrpc.php
-ZABBIX_USER=your_zabbix_user
-ZABBIX_PASSWORD=your_zabbix_password
+# Zabbix, Nagios and iTop run as containers in this same compose stack —
+# these defaults point at them over the compose network. Swap in external
+# hosts (e.g. https://zabbix.anptic.bf/...) to poll real servers instead.
+ZABBIX_API_URL=http://zabbix-web:8080/api_jsonrpc.php
+ZABBIX_USER=Admin
+ZABBIX_PASSWORD=zabbix
 
-ITOP_URL=http://your-itop-host/webservices/rest.php
-ITOP_USER=your_itop_user
-ITOP_PASS=your_itop_password
+ITOP_URL=http://itop/webservices/rest.php
+ITOP_USER=admin
+ITOP_PASS=your_itop_password             # Set after running the iTop setup wizard
+
+NAGIOS_API_URL=http://nagios
+NAGIOS_USER=nagiosadmin                  # Also the Nagios container's web login
+NAGIOS_PASSWORD=your_nagios_password
+
+# Centreon has no supported Docker image — leave empty (collector disabled)
+# until an external server exists, or use its webhook push instead.
+CENTREON_API_URL=
+CENTREON_API_KEY=
 
 # ── Webhook auth ─────────────────────────────────────────
 # Static bearer key supervision tools (Centreon/Zabbix) must send when
 # calling POST /api/incidents/ingest — Authorization: Bearer $NOC_API_KEY
 NOC_API_KEY=your_webhook_api_key
-
-CENTREON_API_URL=http://your-centreon-host/api
-CENTREON_API_KEY=your_centreon_api_key
-
-NAGIOS_API_URL=http://your-nagios-host/
-NAGIOS_API_KEY=your_nagios_api_key
 
 # ── Notifications (SMS/email on critical incidents) ──────
 NOTIFICATIONS_ENABLED=false              # Flip to true once Twilio/SMTP are configured
@@ -434,6 +440,9 @@ After starting the project, the following services are available:
 | **Backend API** | http://localhost:8000 | FastAPI REST API, direct (no TLS) |
 | **API Docs (Swagger)** | http://localhost:8000/docs | Interactive API documentation |
 | **API Docs (ReDoc)** | http://localhost:8000/redoc | Alternative API documentation |
+| **Zabbix** | http://localhost:8081 | Bundled Zabbix 7.0 UI — default login `Admin` / `zabbix` |
+| **iTop** | http://localhost:8082 | Bundled iTop 3.2 (ITSM/CMDB) — one-time setup wizard on first start |
+| **Nagios** | http://localhost:8083 | Bundled Nagios Core — login `$NAGIOS_USER` / `$NAGIOS_PASSWORD` |
 
 > **Note:** The frontend (`:3000`) and backend (`:8000`) ports are exposed directly for debugging and bypass TLS entirely. Only the NGINX gateway enforces HTTPS.
 

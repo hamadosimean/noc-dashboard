@@ -7,6 +7,28 @@ its `*_API_URL` environment variable is set; leave it empty to disable that
 tool. To integrate a tool, set its URL + credentials in `.env` and restart
 `etl-worker`.
 
+**Local server instances** — `docker-compose.yml` now ships Zabbix 7.0 LTS
+(server + web + agent + its own PostgreSQL), Nagios Core and iTop (embedded
+MariaDB) alongside the dashboard, pre-wired to the collectors via `.env`:
+
+| Tool | UI (host) | In-network endpoint the ETL/backend uses | Default login |
+|---|---|---|---|
+| Zabbix | http://localhost:8081 | `http://zabbix-web:8080/api_jsonrpc.php` | `Admin` / `zabbix` |
+| Nagios | http://localhost:8083 | `http://nagios/cgi-bin/statusjson.cgi` | `$NAGIOS_USER` / `$NAGIOS_PASSWORD` |
+| iTop | http://localhost:8082 | `http://itop/webservices/rest.php` | created in setup wizard |
+
+iTop requires a **one-time setup wizard** on first start (DB server
+`localhost`, login `admin`, password `$ITOP_DB_PASSWORD`). Centreon and NetXMS
+have no vendor-supported Docker images — their collectors stay disabled until
+you point their `*_API_URL` at an external server (Centreon can also push
+webhooks, see below).
+
+For incidents to flow from Zabbix/Nagios into the dashboard, the hosts you
+create in those tools must match a `dim_node` (see
+[Host → node matching](#host--node-matching)) — name a Zabbix/Nagios host
+after a node code (e.g. `DED-001`) or node name, and set `dim_node.source_tool`
+accordingly.
+
 ## Table of Contents
 
 - [Summary](#summary)
